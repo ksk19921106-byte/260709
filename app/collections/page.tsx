@@ -1388,16 +1388,18 @@ export default function CollectionsPage() {
           전체 {recordsWithAssignments.length}건 중 담당자 매핑 성공 {mappedRecordsCount}건 · 담당자 미매칭 {unmappedRecords.length}건 · 현재 사용자 {selectedUser.name} 기준 {visibleRecords.length}건 표시
         </section> : null}
 
-        {isAdmin ? <section className="ops-card p-5">
+        <section className="ops-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-[950] uppercase tracking-[0.08em] text-[#1D50A2]">AR CONTROL</p>
-              <h3 className="mt-1 text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">미수금 Aging 관제</h3>
+              <h3 className="mt-1 text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">{isAdmin ? "미수금 Aging 관제" : "내 미수금 Aging"}</h3>
               <p className="mt-1 text-[13px] font-[750] text-[#64748b]">
-                ERP 미수금 내역을 업로드하면 경과일과 AR 금액 기준으로 연체 Aging과 고액 미수를 바로 확인합니다.
+                {isAdmin
+                  ? "ERP 미수금 내역을 업로드하면 경과일과 AR 금액 기준으로 연체 Aging과 고액 미수를 바로 확인합니다."
+                  : "Admin이 업로드한 AR Aging 데이터 중 내 담당 거래처만 보여줍니다."}
               </p>
             </div>
-            <div className="min-w-[320px] rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
+            {isAdmin ? <div className="min-w-[320px] rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
               <input
                 type="file"
                 accept=".xls,.xlsx,.csv,.tsv,.txt"
@@ -1406,14 +1408,18 @@ export default function CollectionsPage() {
               />
               <p className="mt-2 text-[11px] font-[750] text-[#64748b]">COMPANY, SALES, POID, POITEMID, 경과일, AR 컬럼을 인식합니다.</p>
               {arFileMessage ? <p className="mt-1 text-[11px] font-[900] text-[#1D50A2]">{arFileMessage}</p> : null}
-            </div>
+            </div> : (
+              <div className="rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-4 py-3 text-[12px] font-[850] text-[#64748b]">
+                현재 사용자 <b className="text-[#1D50A2]">{selectedUser.name}</b> 기준 {arSummary.totalCount}건 표시
+              </div>
+            )}
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <SummaryTile label="전체 AR 대상" count={`${arSummary.totalCount}건`} amount={formatKrwShort(arSummary.totalAr)} tone="blue" />
+            <SummaryTile label={isAdmin ? "전체 AR 대상" : "내 AR 대상"} count={`${arSummary.totalCount}건`} amount={formatKrwShort(arSummary.totalAr)} tone="blue" />
             <SummaryTile label="30일 이상 연체" count={`${arSummary.over30Count}건`} amount={formatKrwShort(arSummary.over30Amount)} tone="red" />
             <SummaryTile label="고액 미수" count={`${arSummary.highCount}건`} amount={formatKrwShort(arSummary.highAmount)} tone="orange" />
-            <SummaryTile label="업로드 상태" count={arRecords.length ? "업로드됨" : "샘플"} amount={arRecords.length ? `${arRecords.length}건` : "기본 데이터"} tone="green" />
+            <SummaryTile label={isAdmin ? "업로드 상태" : "데이터 기준"} count={arRecords.length ? "업로드됨" : "샘플"} amount={arRecords.length ? `${arRecords.length}건` : "기본 데이터"} tone="green" />
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
@@ -1439,7 +1445,7 @@ export default function CollectionsPage() {
 
             <div className="rounded-[18px] border border-[#e5eaf3] bg-white p-4">
               <div className="flex items-center justify-between gap-3">
-                <h4 className="text-[15px] font-[950] text-[#111827]">고액 미수 TOP</h4>
+                <h4 className="text-[15px] font-[950] text-[#111827]">{isAdmin ? "고액 미수 TOP" : "내 고액 미수 TOP"}</h4>
                 <span className="rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#b85f18]">AR 기준</span>
               </div>
               <div className="mt-3 overflow-hidden rounded-[16px] border border-[#edf2f7]">
@@ -1469,7 +1475,7 @@ export default function CollectionsPage() {
               </div>
             </div>
           </div>
-        </section> : null}
+        </section>
 
         <section className="hidden">
           <div className="flex flex-wrap items-start justify-between gap-3">

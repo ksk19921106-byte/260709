@@ -21,7 +21,16 @@ import { ModulePage } from "../components/ModulePage";
 import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import { REQUEST_FORM_CONFIGS } from "../services/formValidation";
 import { fetchRequests, type RequestItem, type RequestStatus } from "../services/requestStorage";
-import { buildCollectionComposition, normalizeSalesName, receivableRecords, type ReceivableRecord } from "../services/receivables";
+import {
+  buildCollectionComposition,
+  buildCollectionSummary,
+  buildSalesStats,
+  buildTeamStats,
+  normalizeSalesName,
+  normalizeTeamName,
+  receivableRecords,
+  type ReceivableRecord
+} from "../services/receivables";
 import type { ClosingIssue, ClosingSnapshot } from "../services/closingPasteParser";
 import { fetchBlockedUsers, updateBlockedUser, type BlockedUserMap, type MonthEndGateStatus } from "../services/monthEndGate";
 import { fetchMonthEndRmaSnapshot, type MonthEndRmaSnapshot, type MonthEndRmaRecord } from "../services/monthEndRma";
@@ -34,6 +43,20 @@ import {
 
 type StatusTone = "blue" | "orange" | "red" | "green" | "gray";
 type IssueStatus = "normal" | "attention" | "needCheck";
+type VipsOpsTab = "monthEnd" | "collection" | "team" | "sales" | "gatekeeper";
+type DemoArRecord = {
+  id: string;
+  company: string;
+  sales: string;
+  team: string;
+  poid?: string;
+  poitemId?: string;
+  itemName?: string;
+  amount: number;
+  ar: number;
+  overdueDays: number;
+  status: string;
+};
 type GatekeeperRow = {
   name: string;
   team: string;
@@ -126,6 +149,72 @@ const highValueThreshold = 10000000;
 
 function krw(value: number) {
   return `${value.toLocaleString("ko-KR")}원`;
+}
+
+function compactKrw(value: number) {
+  const safe = Math.round(value || 0);
+  if (Math.abs(safe) >= 100000000) return `${(safe / 100000000).toFixed(1).replace(/\.0$/, "")}억`;
+  if (Math.abs(safe) >= 10000) return `${Math.round(safe / 10000).toLocaleString("ko-KR")}만원`;
+  return krw(safe);
+}
+
+function normalizeLooseText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function normalizeLiveStatus(value: unknown, expected: number, paid: number, diff: number): ReceivableRecord["status"] {
+  const text = normalizeLooseText(value);
+  if (text.includes("완료") || text.includes("?꾨즺")) return "완료";
+  if (text.includes("부분") || text.includes("遺遺")) return "부분수금";
+  if (text.includes("미수") || text.includes("誘몄닔")) return "미수";
+  if (expected > 0 && diff <= 0) return "완료";
+  if (paid > 0 && diff > 0) return "부분수금";
+  return "미수";
+}
+
+function normalizeLiveReceivableRecord(record: Record<string, unknown>, index: number): ReceivableRecord | null {
+  const name = normalizeLooseText(record.name ?? record.company);
+  if (!name) return null;
+  const expected = Number(record.expected ?? record.expectedAmount ?? 0);
+  const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
+  const explicitDiff = Number(record.diff ?? record.unpaidAmount ?? NaN);
+  const diff = Number.isFinite(explicitDiff) ? Math.max(0, explicitDiff) : Math.max(0, expected - explicitPaid);
+  const paid = explicitPaid || Math.max(0, expected - diff);
+  const overdueDays = Number(record.overdueDays ?? 0);
+
+  return {
+    id: normalizeLooseText(record.id) || `live-${index}`,
+    team: normalizeTeamName(normalizeLooseText(record.team)),
+    fSales: normalizeSalesName(normalizeLooseText(record.fSales)) || undefined,
+    sales: normalizeSalesName(normalizeLooseText(record.sales)) || normalizeLooseText(record.sales),
+    name,
+    expected,
+    paid,
+    diff,
+    rate: Number(record.rate ?? (expected > 0 ? Math.round((paid / expected) * 1000) / 10 : 0)),
+    status: normalizeLiveStatus(record.status, expected, paid, diff),
+    gubun: normalizeLooseText(record.gubun) || undefined,
+    basis: normalizeLooseText(record.basis) || "수금현황 웹앱 연동",
+    matched_payer: normalizeLooseText(record.matched_payer ?? record.matchedPayer) || undefined,
+    overdueDays,
+    agingBucket: normalizeLooseText(record.agingBucket) || (overdueDays > 30 ? "30일초과" : overdueDays > 21 ? "30일이내" : overdueDays > 14 ? "21일이내" : overdueDays > 7 ? "14일이내" : "7일이내")
+  };
+}
+
+function extractLiveReceivableRecords(payload: unknown): ReceivableRecord[] {
+  const root = payload as { payload?: unknown; records?: Record<string, unknown>[]; data?: { records?: Record<string, unknown>[] } };
+  const body = (root?.payload ?? root) as { records?: Record<string, unknown>[]; data?: { records?: Record<string, unknown>[] } };
+  const records = Array.isArray(body.records) ? body.records : body.data?.records;
+  if (!Array.isArray(records)) return [];
+  return records
+    .map((record, index) => normalizeLiveReceivableRecord(record, index))
+    .filter((record): record is ReceivableRecord => Boolean(record && record.expected > 0));
+}
+
+function formatOverdueMonths(days: number) {
+  const safeDays = Math.max(0, Math.round(days || 0));
+  if (safeDays < 30) return "1개월 미만";
+  return `${Math.max(1, Math.floor(safeDays / 30))}개월`;
 }
 
 function requesterKey(value: string) {
@@ -622,6 +711,156 @@ function CollectionIssueModal({
   );
 }
 
+function OpsMiniPanel({ title, rows }: { title: string; rows: string[][] }) {
+  return (
+    <article className="ops-card min-w-0 overflow-hidden p-4">
+      <h3 className="truncate text-[17px] font-[950] text-[#111827]">{title}</h3>
+      <div className="mt-4 max-h-[260px] space-y-2 overflow-auto pr-1">
+        {rows.length === 0 ? (
+          <p className="rounded-[14px] bg-[#f8fbff] p-3 text-[12px] font-[800] text-[#64748b]">표시할 데이터가 없습니다.</p>
+        ) : (
+          rows.map((row, index) => (
+            <div key={`${title}-${index}`} className="grid grid-cols-3 gap-2 rounded-[14px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-2 text-[12px] font-[850] text-[#475569]">
+              <span className="truncate font-[950] text-[#111827]">{row[0]}</span>
+              <span className="truncate">{row[1]}</span>
+              <span className="truncate text-right">{row[2]}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </article>
+  );
+}
+
+function CollectionControlTower({
+  records,
+  arRecords,
+  cards,
+  sourceMessage,
+  onSelect
+}: {
+  records: ReceivableRecord[];
+  arRecords: DemoArRecord[];
+  cards: CollectionOpsCard[];
+  sourceMessage: string;
+  onSelect: (card: CollectionOpsCard) => void;
+}) {
+  const summary = buildCollectionSummary(records);
+  const teamStats = buildTeamStats(records);
+  const salesStats = buildSalesStats(records).filter((row) => row.label !== "미매칭");
+  const unmatchedRecords = records.filter((record) => !normalizeSalesName(record.sales) || record.gubun === "담당자미매칭");
+  const arTotal = arRecords.reduce((sum, record) => sum + record.ar, 0);
+  const longOverdueRows = arRecords
+    .filter((record) => record.overdueDays >= 30)
+    .sort((a, b) => b.overdueDays - a.overdueDays || b.ar - a.ar)
+    .slice(0, 8);
+  const agingBuckets = [
+    { label: "7일이내", test: (days: number) => days <= 7 },
+    { label: "14일이내", test: (days: number) => days > 7 && days <= 14 },
+    { label: "21일이내", test: (days: number) => days > 14 && days <= 21 },
+    { label: "30일이내", test: (days: number) => days > 21 && days <= 30 },
+    { label: "30일초과", test: (days: number) => days > 30 }
+  ].map((bucket) => {
+    const rows = arRecords.filter((record) => bucket.test(record.overdueDays));
+    return { label: bucket.label, count: rows.length, amount: rows.reduce((sum, record) => sum + record.ar, 0) };
+  });
+
+  return (
+    <div className="space-y-4">
+      <CollectionOpsSummary cards={cards} onSelect={onSelect} />
+
+      <section className="ops-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-[950] uppercase tracking-[0.08em] text-[#1D50A2]">COLLECTION CONTROL</p>
+            <h2 className="mt-1 text-[20px] font-[950] tracking-[-0.03em] text-[#111827]">수금 관제 요약</h2>
+            <p className="mt-1 text-[12px] font-[750] text-[#64748b]">{sourceMessage}</p>
+          </div>
+          <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[12px] font-[950] text-[#1D50A2]">전체 수금률 {summary.collectionRate}%</span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <KpiCard icon={WalletCards} label="수금예정액" value={compactKrw(summary.expected)} helper={`${records.length}건`} tone="blue" />
+          <KpiCard icon={CheckCircle2} label="수금 완료금액" value={compactKrw(summary.completedAmount)} helper={`완료 기준`} tone="green" />
+          <KpiCard icon={AlertTriangle} label="미수금액" value={compactKrw(summary.unpaidAmount)} helper={`${summary.issues.length}건 확인`} tone="orange" />
+          <KpiCard icon={ShieldAlert} label="담당자 미매칭" value={`${unmatchedRecords.length}건`} helper="담당자 지정 필요" tone="red" />
+        </div>
+      </section>
+
+      <section className="ops-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-[950] uppercase tracking-[0.08em] text-[#1D50A2]">AR AGING</p>
+            <h2 className="mt-1 text-[20px] font-[950] tracking-[-0.03em] text-[#111827]">미수금 Aging 관제</h2>
+            <p className="mt-1 text-[12px] font-[750] text-[#64748b]">수금관리에서 Admin이 업로드한 AR Aging 기준으로 장기미수와 기간 분포를 봅니다.</p>
+          </div>
+          <span className="rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#b85f18]">{arRecords.length}건 · {compactKrw(arTotal)}</span>
+        </div>
+        <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[18px] border border-[#e5eaf3] bg-[#fbfdff] p-4">
+            <h3 className="text-[15px] font-[950] text-[#111827]">Aging 분석</h3>
+            <div className="mt-3 space-y-2">
+              {agingBuckets.map((row) => {
+                const width = arTotal > 0 ? Math.max(8, Math.round((row.amount / arTotal) * 100)) : 0;
+                return (
+                  <div key={row.label} className="rounded-[14px] border border-[#e5eaf3] bg-white p-3">
+                    <div className="flex items-center justify-between gap-3 text-[12px] font-[900]">
+                      <span className="text-[#111827]">{row.label}</span>
+                      <span className="text-[#64748b]">{row.count}건 · {compactKrw(row.amount)}</span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#edf2f7]">
+                      <div className="h-full rounded-full bg-[#1D50A2]" style={{ width: `${width}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <OpsMiniPanel title="장기미수" rows={longOverdueRows.map((row) => [row.company, formatOverdueMonths(row.overdueDays), compactKrw(row.ar)])} />
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <OpsMiniPanel title="팀별 성과" rows={teamStats.map((row) => [row.label, `${row.rate}%`, compactKrw(row.remain)])} />
+        <OpsMiniPanel title="담당자별 성과" rows={salesStats.slice(0, 10).map((row) => [row.label, `${row.rate}%`, `${row.count}건`])} />
+      </section>
+
+      <section className="ops-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[20px] font-[950] tracking-[-0.03em] text-[#111827]">담당자 미매칭 수금건</h2>
+            <p className="mt-1 text-[12px] font-[750] text-[#64748b]">담당자 값이 비어 있거나 담당자미매칭으로 들어온 수금건입니다. Sales 지정 후 수금관리에서 후속 확인합니다.</p>
+          </div>
+          <span className="rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#b85f18]">{unmatchedRecords.length}건</span>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e7ecf4]">
+          <div className="grid grid-cols-[minmax(220px,1fr)_120px_120px_120px_1fr] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+            <span>거래처</span>
+            <span>예정금액</span>
+            <span>미수금액</span>
+            <span>상태</span>
+            <span>매칭근거</span>
+          </div>
+          <div className="max-h-[320px] overflow-auto">
+            {unmatchedRecords.length === 0 ? (
+              <p className="p-5 text-center text-[13px] font-[850] text-[#64748b]">담당자 미매칭 수금건이 없습니다.</p>
+            ) : (
+              unmatchedRecords.map((record) => (
+                <div key={record.id} className="grid grid-cols-[minmax(220px,1fr)_120px_120px_120px_1fr] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
+                  <span className="truncate font-[950] text-[#111827]">{record.name}</span>
+                  <span className="truncate font-[850] text-[#475569]">{compactKrw(record.expected)}</span>
+                  <span className="truncate font-[950] text-[#b85f18]">{compactKrw(record.diff)}</span>
+                  <span className="truncate font-[850] text-[#64748b]">{record.status}</span>
+                  <span className="truncate font-[850] text-[#64748b]">{record.basis || record.gubun || "-"}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 type TeamOpsMetric = {
   team: string;
   members: string[];
@@ -1076,6 +1315,10 @@ export default function VipsOpsPage() {
   const [monthEndActionRequests, setMonthEndActionRequests] = useState<MonthEndActionRequest[]>([]);
   const [selectedMonthEndCard, setSelectedMonthEndCard] = useState<MonthEndOpsCard | null>(null);
   const [selectedCollectionCard, setSelectedCollectionCard] = useState<CollectionOpsCard | null>(null);
+  const [activeTab, setActiveTab] = useState<VipsOpsTab>("monthEnd");
+  const [collectionRecords, setCollectionRecords] = useState<ReceivableRecord[]>(receivableRecords);
+  const [arRecords, setArRecords] = useState<DemoArRecord[]>([]);
+  const [collectionSourceMessage, setCollectionSourceMessage] = useState("기본 샘플 데이터 기준으로 표시 중입니다.");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1096,6 +1339,39 @@ export default function VipsOpsPage() {
       .then(setRmaSnapshot)
       .catch(() => setRmaSnapshot(null));
 
+    fetch("/api/receivables-status", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = payload?.snapshot?.records;
+        if (!Array.isArray(records)) return;
+        setCollectionRecords(records as ReceivableRecord[]);
+        setCollectionSourceMessage(`공용 저장소 전체 수금현황 ${records.length}건 기준입니다.`);
+      })
+      .catch(() => {
+        // Live web app or sample data can still be used below.
+      });
+
+    fetch("/api/receivables-live", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = extractLiveReceivableRecords(payload);
+        if (records.length === 0) return;
+        setCollectionRecords(records);
+        setCollectionSourceMessage(`수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다.`);
+      })
+      .catch(() => {
+        // Shared snapshot/sample data remains available when live sync is unavailable.
+      });
+
+    fetch("/api/receivables-aging", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = payload?.snapshot?.records;
+        if (!Array.isArray(records)) return;
+        setArRecords(records as DemoArRecord[]);
+      })
+      .catch(() => setArRecords([]));
+
     const syncActionRequests = () => setMonthEndActionRequests(fetchMonthEndActionRequests());
     syncActionRequests();
     window.addEventListener("month-end-action-requests-updated", syncActionRequests);
@@ -1110,7 +1386,7 @@ export default function VipsOpsPage() {
   const useSnapshotClosing = closingIssues.length > 0;
   const rmaRecords = useMemo(() => rmaSnapshot?.records ?? [], [rmaSnapshot]);
   const monthEndOpsCards = useMemo(() => buildMonthEndOpsCards(closingIssues, rmaRecords), [closingIssues, rmaRecords]);
-  const collectionOpsCards = useMemo(() => buildCollectionOpsCards(receivableRecords), []);
+  const collectionOpsCards = useMemo(() => buildCollectionOpsCards(collectionRecords), [collectionRecords]);
 
   const salesRows = useMemo<SalesOpsMetric[]>(() => {
     return TEST_USERS.filter((user) => user.role === "SALES").map((user) => {
@@ -1118,9 +1394,9 @@ export default function VipsOpsPage() {
       const userClosingIssues = useSnapshotClosing ? issuesForSales(closingIssues, user.salesName) : [];
       const monthEndCount = useSnapshotClosing ? userClosingIssues.length : legacy?.monthEndCount ?? 0;
       const monthEndAmount = useSnapshotClosing ? userClosingIssues.reduce((sum, issue) => sum + issue.amount, 0) : legacy?.monthEndAmount ?? 0;
-      const collectionRecords = collectionRecordsForSales(receivableRecords, user.salesName);
-      const collectionComposition = buildCollectionComposition(collectionRecords);
-      const riskRecords = collectionRiskRecords(collectionRecords);
+      const userCollectionRecords = collectionRecordsForSales(collectionRecords, user.salesName);
+      const collectionComposition = buildCollectionComposition(userCollectionRecords);
+      const riskRecords = collectionRiskRecords(userCollectionRecords);
       const userRequests = requestForSales(requests, user.name);
 
       return {
@@ -1137,7 +1413,7 @@ export default function VipsOpsPage() {
         rejectionRate: rejectionRate(userRequests)
       };
     });
-  }, [closingIssues, requests, useSnapshotClosing]);
+  }, [closingIssues, collectionRecords, requests, useSnapshotClosing]);
 
   const teamRows = useMemo<TeamOpsMetric[]>(
     () =>
@@ -1145,7 +1421,7 @@ export default function VipsOpsPage() {
         const members = team.members;
         const memberRows = salesRows.filter((row) => members.includes(row.name));
         const teamRequests = requestsForTeam(requests, members);
-        const teamCollectionRecords = receivableRecords.filter((record) => members.includes(normalizeSalesName(record.sales)) || members.includes(normalizeSalesName(record.fSales)));
+        const teamCollectionRecords = collectionRecords.filter((record) => members.includes(normalizeSalesName(record.sales)) || members.includes(normalizeSalesName(record.fSales)));
         const teamCollectionComposition = buildCollectionComposition(teamCollectionRecords);
         const collectionRisk = collectionRiskRecords(teamCollectionRecords);
         const monthEndCount = memberRows.reduce((sum, row) => sum + row.monthEndCount, 0);
@@ -1164,13 +1440,13 @@ export default function VipsOpsPage() {
           rejectedCount: countByStatus(teamRequests).rejected
         };
       }),
-    [requests, salesRows]
+    [collectionRecords, requests, salesRows]
   );
 
   const monthEndCount = salesRows.reduce((sum, row) => sum + row.monthEndCount, 0);
   const monthEndAmount = salesRows.reduce((sum, row) => sum + row.monthEndAmount, 0);
-  const allCollectionComposition = useMemo(() => buildCollectionComposition(receivableRecords), []);
-  const allCollectionRisk = useMemo(() => collectionRiskRecords(receivableRecords), []);
+  const allCollectionComposition = useMemo(() => buildCollectionComposition(collectionRecords), [collectionRecords]);
+  const allCollectionRisk = useMemo(() => collectionRiskRecords(collectionRecords), [collectionRecords]);
   const collectionCount = allCollectionRisk.length;
   const collectionAmount = allCollectionRisk.reduce((sum, record) => sum + record.diff, 0);
   const needCheckTeamNames = teamRows.filter((team) => team.monthEndRate < 50).map((team) => team.team);
@@ -1220,32 +1496,69 @@ export default function VipsOpsPage() {
       description="팀별 월마감·수금·요청 이슈를 한눈에 확인하고, 오늘 먼저 봐야 할 운영 이슈를 관리합니다."
     >
       <div className="mt-5 space-y-4">
-        <MonthEndOpsSummary cards={monthEndOpsCards} onSelect={setSelectedMonthEndCard} />
-
-        <CollectionOpsSummary cards={collectionOpsCards} onSelect={setSelectedCollectionCard} />
-        <p className="text-[11px] font-[750] text-[#94a3b8]">
-          수금 이슈 기준: 30일 이상 미수 또는 {krw(highValueThreshold)} 이상 고액미수입니다. 동일 거래가 두 조건에 모두 해당해도 1건으로만 계산합니다.
-        </p>
-
-        <section className="ops-card p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-[18px] font-[950] text-[#111827]">팀별 운영 현황</h2>
-              <p className="mt-0.5 text-[12px] font-[750] text-[#64748b]">월마감, 수금, 요청 이슈를 팀 단위로 보고 우선순위를 판단합니다.</p>
-            </div>
-          </div>
-          <div className="mt-4 grid gap-3 xl:grid-cols-2">
-            {teamRows.map((team) => (
-              <TeamControlCard key={team.team} team={team} />
+        <section className="ops-card p-3">
+          <div className="flex flex-wrap gap-2">
+            {[
+              { key: "monthEnd" as const, label: "월마감" },
+              { key: "collection" as const, label: "수금" },
+              { key: "team" as const, label: "팀별 현황" },
+              { key: "sales" as const, label: "Sales별 현황" },
+              { key: "gatekeeper" as const, label: "월마감 요청 차단관리" }
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`h-10 rounded-full px-4 text-[13px] font-[950] transition ${
+                  activeTab === tab.key
+                    ? "bg-[#1D50A2] text-white shadow-[0_10px_24px_rgba(29,80,162,0.18)]"
+                    : "bg-[#f8fbff] text-[#64748b] hover:bg-[#edf4ff] hover:text-[#1D50A2]"
+                }`}
+              >
+                {tab.label}
+              </button>
             ))}
           </div>
         </section>
 
-        <SalesStatusTable rows={salesRows} />
+        {activeTab === "monthEnd" ? (
+          <MonthEndOpsSummary cards={monthEndOpsCards} onSelect={setSelectedMonthEndCard} />
+        ) : null}
 
-        <GatekeeperControlPanel rows={gatekeeperRows} onUpdate={handleGateUpdate} />
+        {activeTab === "collection" ? (
+          <CollectionControlTower
+            records={collectionRecords}
+            arRecords={arRecords}
+            cards={collectionOpsCards}
+            sourceMessage={collectionSourceMessage}
+            onSelect={setSelectedCollectionCard}
+          />
+        ) : null}
 
-        <MonthEndActionRequestsSection requests={monthEndActionRequests} onStatusChange={handleActionStatusChange} />
+        {activeTab === "team" ? (
+          <section className="ops-card p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[18px] font-[950] text-[#111827]">팀별 운영 현황</h2>
+                <p className="mt-0.5 text-[12px] font-[750] text-[#64748b]">월마감, 수금, 요청 이슈를 팀 단위로 보고 우선순위를 판단합니다.</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              {teamRows.map((team) => (
+                <TeamControlCard key={team.team} team={team} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === "sales" ? <SalesStatusTable rows={salesRows} /> : null}
+
+        {activeTab === "gatekeeper" ? (
+          <>
+            <GatekeeperControlPanel rows={gatekeeperRows} onUpdate={handleGateUpdate} />
+            <MonthEndActionRequestsSection requests={monthEndActionRequests} onStatusChange={handleActionStatusChange} />
+          </>
+        ) : null}
 
       </div>
       <MonthEndIssueModal card={selectedMonthEndCard} onClose={() => setSelectedMonthEndCard(null)} />
