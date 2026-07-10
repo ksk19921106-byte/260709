@@ -187,7 +187,7 @@ export default function RequestStatusPage() {
           const owners = (item.assignedOwners ?? []).map((owner) => requesterKey(owner));
           if (!owners.some((owner) => assigneeSet.has(owner))) return false;
         }
-        if (isOpsAll) {
+        if (isAdminUser) {
           if (adminFilters.team && requestTeam(item) !== adminFilters.team) return false;
           if (adminFilters.status && requestBucket(item.status) !== adminFilters.status) return false;
           if (adminFilters.person) {
@@ -389,7 +389,7 @@ export default function RequestStatusPage() {
             <span className="rounded-full bg-[#edf4ff] px-4 py-2 text-[12px] font-[950] text-[#1D50A2]">총 {visibleItems.length}건</span>
           </div>
 
-          {isOpsAll ? (
+          {isAdminUser ? (
             <div className="mt-5 grid gap-3 rounded-[18px] border border-[#d8e4f3] bg-[#f8fbff] p-4 md:grid-cols-5">
               <label className="min-w-0">
                 <span className="block text-[11px] font-[850] text-[#64748b]">요청종류</span>

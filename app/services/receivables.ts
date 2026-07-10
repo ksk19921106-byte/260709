@@ -48,21 +48,42 @@ export type ReceivableStat = {
 };
 
 export const SALES_ALIAS_MAP: Record<string, string> = {
+  HV: "Harvey",
+  Harvey: "Harvey",
+  LR: "Lauren",
   MX: "Max",
   Max: "Max",
   JE: "Jenny",
   Jenny: "Jenny",
   LO: "Lauren",
   Lauren: "Lauren",
+  RL: "Riley",
+  RI: "Riley",
   Riley: "Riley",
+  JK: "Jake",
+  JA: "Jake",
   Jake: "Jake",
+  TE: "Terry",
+  TR: "Terry",
   Terry: "Terry",
+  CR: "Chris",
+  CH: "Chris",
   Chris: "Chris",
+  RO: "Robin",
+  RB: "Robin",
   Robin: "Robin",
   WN: "Winnie",
   Winnie: "Winnie",
-  Harvey: "Harvey",
-  Sally: "Sally"
+  SA: "Sally",
+  Sally: "Sally",
+  VC: "Vincent",
+  VN: "Vincent",
+  Vincent: "Vincent",
+  GA: "Gavin",
+  GV: "Gavin",
+  Gavin: "Gavin",
+  ER: "Eric",
+  Eric: "Eric"
 };
 
 export function normalizeSalesName(value?: string | null) {

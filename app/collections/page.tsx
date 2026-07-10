@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowRight, Banknote, CheckCircle2, CircleDollarSign, Search, ShieldCheck, UserRound } from "lucide-react";
+import { AlertCircle, Banknote, CheckCircle2, CircleDollarSign, Search, ShieldCheck, UserRound } from "lucide-react";
 import { ModulePage } from "../components/ModulePage";
 import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import {
@@ -32,6 +32,7 @@ type CollectionActionStatus = {
 const ACTION_STATUS_KEY = "icbanq.ops.collectionActionStatus";
 const MATCHING_DEMO_KEY = "icbanq.ops.collectionMatchingDemo";
 const AR_DEMO_KEY = "icbanq.ops.arAgingDemo";
+const RECEIVABLE_STATUS_KEY = "icbanq.ops.receivableStatusDemo";
 const PAYMENT_ASSIGNMENT_KEY = "icbanq.ops.collectionPaymentAssignments";
 const MATCH_CANDIDATE_THRESHOLD = 35;
 
@@ -91,6 +92,29 @@ type MatchingDemoState = {
   matches: DemoCollectionMatch[];
 };
 
+type LiveReceivableRecord = {
+  id?: string;
+  team?: string;
+  sales?: string;
+  fSales?: string;
+  name?: string;
+  company?: string;
+  expected?: number;
+  expectedAmount?: number;
+  paid?: number;
+  paidAmount?: number;
+  diff?: number;
+  unpaidAmount?: number;
+  rate?: number;
+  status?: string;
+  gubun?: string;
+  basis?: string;
+  matched_payer?: string;
+  matchedPayer?: string;
+  overdueDays?: number;
+  agingBucket?: string;
+};
+
 const filterOptions: Array<{ key: TableFilter; label: string }> = [
   { key: "all", label: "전체" },
   { key: "completed", label: "완료" },
@@ -135,6 +159,35 @@ function statusStyle(status: ReceivableRecord["status"]) {
 
 function parseAmount(value: string) {
   return Number(String(value ?? "").replace(/[^0-9.-]/g, "") || 0);
+}
+
+function normalizeCollectionStatus(value: string): "완료" | "부분수금" | "미수" {
+  const text = String(value ?? "").trim();
+  if (text.includes("부분")) return "부분수금";
+  if (text.includes("미수")) return "미수";
+  if (text.includes("완료") || text.includes("취소")) return "완료";
+  return "미수";
+}
+
+function parseAgingDays(value: string, agingBucket?: string, status?: string) {
+  const normalizedStatus = normalizeCollectionStatus(status ?? "");
+  if (normalizedStatus === "완료") return 0;
+
+  const raw = String(value ?? "").trim();
+  const numeric = parseAmount(raw);
+  if (raw && raw !== "-" && Number.isFinite(numeric) && numeric > 0) return numeric;
+
+  return 0;
+}
+
+function normalizeAgingBucket(value: string, overdueDays: number) {
+  const raw = String(value ?? "").trim();
+  if (raw && raw !== "-") return raw;
+  if (overdueDays > 30) return "30일초과";
+  if (overdueDays > 21) return "30일이내";
+  if (overdueDays > 14) return "21일이내";
+  if (overdueDays > 7) return "14일이내";
+  return "7일이내";
 }
 
 function normalizeMatchText(value: string) {
@@ -351,13 +404,15 @@ function parseArRows(rows: string[][]): DemoArRecord[] {
   const headers = rows[0].map((header) => String(header ?? "").trim());
   const compactCompanyIdx = headers.findIndex((header) => /행\s*레이블|company|거래처|업체/i.test(header));
   const compactDaysIdx = headers.findIndex((header) => /경과|aging|overdue/i.test(header));
-  const compactArIdx = headers.findIndex((header) => /ar|미수/i.test(header));
+  const compactArIdx = headers.findIndex((header) => /ar|미수|지연\s*금액|지연금액|금액/i.test(header));
 
   if (compactCompanyIdx >= 0 && compactDaysIdx >= 0 && compactArIdx >= 0 && headers.length <= 5) {
     return rows
       .slice(1)
       .map((cells, index) => {
         const company = String(cells[compactCompanyIdx] ?? "").trim();
+        const status = normalizeCollectionStatus("");
+        const overdueDays = parseAgingDays(cells[compactDaysIdx], "", status);
         const ar = parseAmount(cells[compactArIdx]);
         return {
           id: `compact-ar-${company}-${index}`,
@@ -369,21 +424,23 @@ function parseArRows(rows: string[][]): DemoArRecord[] {
           itemName: "미수금 Aging",
           amount: ar,
           ar,
-          overdueDays: parseAmount(cells[compactDaysIdx]),
-          status: "미수"
+          overdueDays,
+          status
         };
       })
       .filter((row) => row.company && !/총합계|합계|grand\s*total/i.test(row.company) && row.ar > 0);
   }
 
-  const companyIdx = findColumn(headers, ["company", "거래처", "업체"], 0);
-  const salesIdx = findColumn(headers, ["sales", "담당"], 1);
+  const companyIdx = findColumn(headers, ["company", "거래처", "업체", "업체명"], 0);
+  const teamIdx = findColumn(headers, ["team", "팀"], -1);
+  const salesIdx = findColumn(headers, ["sales", "담당", "담당자"], 1);
   const poidIdx = findColumn(headers, ["poid", "po id", "주문번호"], 3);
   const poitemIdx = findColumn(headers, ["poitem", "poitemid", "poitem_id"], 4);
-  const daysIdx = findColumn(headers, ["경과", "aging", "overdue"], 7);
+  const daysIdx = findColumn(headers, ["연체일", "경과일", "경과", "overdue"], 7);
+  const agingIdx = findColumn(headers, ["aging"], -1);
   const itemIdx = findColumn(headers, ["pn", "품목", "item"], 8);
-  const amountIdx = findColumn(headers, ["amount", "공급", "금액"], 11);
-  const arIdx = findColumn(headers, ["ar", "미수"], 12);
+  const amountIdx = findColumn(headers, ["예정금액", "amount", "공급", "금액"], 11);
+  const arIdx = findColumn(headers, ["ar", "미수", "지연금액", "지연 금액"], 12);
   const statusIdx = findColumn(headers, ["status", "상태"], 14);
 
   return rows
@@ -392,22 +449,120 @@ function parseArRows(rows: string[][]): DemoArRecord[] {
       const sales = String(cells[salesIdx] ?? "").trim();
       const company = String(cells[companyIdx] ?? "").trim();
       const poitemId = String(cells[poitemIdx] ?? "").trim();
-      const ar = parseAmount(cells[arIdx]);
+      const status = normalizeCollectionStatus(cells[statusIdx] ?? "");
+      const amount = parseAmount(cells[amountIdx]);
+      const rawAr = parseAmount(cells[arIdx]);
+      const ar = status === "완료" ? 0 : rawAr > 0 ? rawAr : amount;
+      const overdueDays = parseAgingDays(cells[daysIdx], cells[agingIdx], status);
       return {
         id: poitemId || `${company}-${index}`,
         company,
         sales: normalizeSalesName(sales),
-        team: normalizeTeamName(sales),
+        team: teamIdx >= 0 ? normalizeTeamName(cells[teamIdx]) : normalizeTeamName(sales),
         poid: String(cells[poidIdx] ?? "").trim(),
         poitemId,
         itemName: String(cells[itemIdx] ?? "").trim(),
-        amount: parseAmount(cells[amountIdx]),
+        amount: amount || ar,
         ar,
-        overdueDays: parseAmount(cells[daysIdx]),
-        status: String(cells[statusIdx] ?? "").trim()
+        overdueDays,
+        agingBucket: normalizeAgingBucket(cells[agingIdx], overdueDays),
+        status
       };
     })
     .filter((row) => row.company && row.ar > 0);
+}
+
+function parseReceivableStatusRows(rows: string[][]): ReceivableRecord[] {
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((header) => String(header ?? "").trim());
+  const companyIdx = findColumn(headers, ["거래처", "업체", "업체명", "company"], 0);
+  const teamIdx = findColumn(headers, ["팀", "team"], 1);
+  const salesIdx = findColumn(headers, ["담당자", "담당", "sales"], 2);
+  const expectedIdx = findColumn(headers, ["예정금액", "수금예정", "amount", "금액"], 3);
+  const overdueIdx = findColumn(headers, ["연체일", "경과일"], 4);
+  const agingIdx = findColumn(headers, ["aging"], 5);
+  const statusIdx = findColumn(headers, ["상태", "status"], 6);
+
+  return rows
+    .slice(1)
+    .map((cells, index) => {
+      const name = String(cells[companyIdx] ?? "").trim();
+      const team = normalizeTeamName(cells[teamIdx]);
+      const sales = normalizeSalesName(cells[salesIdx]) || String(cells[salesIdx] ?? "").trim();
+      const expected = parseAmount(cells[expectedIdx]);
+      const status = normalizeCollectionStatus(cells[statusIdx] ?? "");
+      const overdueDays = parseAgingDays(cells[overdueIdx], "", status);
+      const paid = status === "완료" ? expected : 0;
+      const diff = Math.max(0, expected - paid);
+
+      return {
+        id: `status-${normalizeMatchText(name) || "row"}-${index}`,
+        team,
+        sales,
+        name,
+        expected,
+        paid,
+        diff,
+        rate: expected > 0 ? Math.round((paid / expected) * 1000) / 10 : 0,
+        status,
+        gubun: status === "부분수금" ? "부분수금" : status,
+        basis: "전체 수금현황 업로드",
+        overdueDays,
+        agingBucket: normalizeAgingBucket(cells[agingIdx], overdueDays)
+      };
+    })
+    .filter((record) => record.name && record.expected > 0);
+}
+
+function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: number): ReceivableRecord | null {
+  const name = String(record.name ?? record.company ?? "").trim();
+  if (!name) return null;
+
+  const expected = Number(record.expected ?? record.expectedAmount ?? 0);
+  const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
+  const explicitDiff = Number(record.diff ?? record.unpaidAmount ?? NaN);
+  const status = normalizeCollectionStatus(record.status ?? "");
+  const diff = Number.isFinite(explicitDiff)
+    ? Math.max(0, explicitDiff)
+    : status === "완료"
+      ? 0
+      : Math.max(0, expected - explicitPaid);
+  const paid = explicitPaid || Math.max(0, expected - diff);
+
+  return {
+    id: String(record.id ?? `live-${normalizeMatchText(name) || "row"}-${index}`),
+    team: normalizeTeamName(record.team),
+    fSales: record.fSales ? normalizeSalesName(record.fSales) : undefined,
+    sales: normalizeSalesName(record.sales) || String(record.sales ?? "").trim(),
+    name,
+    expected,
+    paid,
+    diff,
+    rate: Number(record.rate ?? (expected > 0 ? Math.round((paid / expected) * 1000) / 10 : 0)),
+    status,
+    gubun: record.gubun,
+    basis: record.basis ?? "수금현황 웹앱 연동",
+    matched_payer: record.matched_payer ?? record.matchedPayer,
+    overdueDays: Number(record.overdueDays ?? 0),
+    agingBucket: record.agingBucket ?? normalizeAgingBucket("", Number(record.overdueDays ?? 0))
+  };
+}
+
+function extractLiveReceivableRecords(payload: unknown): ReceivableRecord[] {
+  const root = payload as {
+    payload?: unknown;
+    records?: LiveReceivableRecord[];
+    data?: { records?: LiveReceivableRecord[] };
+  };
+  const body = (root?.payload ?? root) as {
+    records?: LiveReceivableRecord[];
+    data?: { records?: LiveReceivableRecord[] };
+  };
+  const records = Array.isArray(body.records) ? body.records : body.data?.records;
+  if (!Array.isArray(records)) return [];
+  return records
+    .map((record, index) => normalizeLiveReceivableRecord(record, index))
+    .filter((record): record is ReceivableRecord => Boolean(record && record.expected > 0));
 }
 
 function formatOverdueMonths(days: number) {
@@ -481,6 +636,8 @@ export default function CollectionsPage() {
   const [assignedSales, setAssignedSales] = useState<Record<string, string>>({});
   const [orderPaste, setOrderPaste] = useState("");
   const [paymentPaste, setPaymentPaste] = useState("");
+  const [statusPaste, setStatusPaste] = useState("");
+  const [statusFileMessage, setStatusFileMessage] = useState("");
   const [orderFileMessage, setOrderFileMessage] = useState("");
   const [paymentFileMessage, setPaymentFileMessage] = useState("");
   const [arFileMessage, setArFileMessage] = useState("");
@@ -489,11 +646,13 @@ export default function CollectionsPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<Record<string, string[]>>({});
   const [assignedPaymentSales, setAssignedPaymentSales] = useState<Record<string, string>>({});
   const [arRecords, setArRecords] = useState<DemoArRecord[]>([]);
+  const [uploadedReceivableRecords, setUploadedReceivableRecords] = useState<ReceivableRecord[]>([]);
 
   const isAdmin = selectedUser.accessRole === "admin" || selectedUser.team === "VIPS팀";
+  const sourceReceivableRecords = uploadedReceivableRecords.length > 0 ? uploadedReceivableRecords : receivableRecords;
   const recordsWithAssignments = useMemo(
-    () => receivableRecords.map((record) => ({ ...record, sales: assignedSales[record.id] ?? record.sales })),
-    [assignedSales]
+    () => sourceReceivableRecords.map((record) => ({ ...record, sales: assignedSales[record.id] ?? record.sales })),
+    [assignedSales, sourceReceivableRecords]
   );
   const visibleRecords = useMemo(() => filterReceivablesByUser(recordsWithAssignments, selectedUser), [recordsWithAssignments, selectedUser]);
   const salesFilterOptions = useMemo(() => {
@@ -539,16 +698,6 @@ export default function CollectionsPage() {
   const checkedCount = allIssues.filter((issue) => actionStatuses[issue.id]?.status === "checked").length;
   const todayTotal = allIssues.length;
   const todayProgress = todayTotal > 0 ? Math.round((checkedCount / todayTotal) * 100) : 100;
-  const partialCount = composition.partialRecords.length;
-  const collectionScore = Math.max(
-    0,
-    100 -
-      (summary.unpaidAmount > 0 ? 20 : 0) -
-      (summary.longOverdueCount > 0 ? 20 : 0) -
-      (partialCount > 0 ? 10 : 0) -
-      (openIssues.length > 0 ? 10 : 0)
-  );
-  const scoreLabel = collectionScore >= 90 ? "Healthy" : collectionScore >= 70 ? "Attention" : "Risk";
   const analyticsRecords = isAdmin ? recordsWithAssignments : visibleRecords;
   const reviewDemoPayments = useMemo(
     () =>
@@ -567,28 +716,13 @@ export default function CollectionsPage() {
     [matchingDemo]
   );
   const scopedArRecords = useMemo(() => {
-    const source = arRecords.length
-      ? arRecords
-      : analyticsRecords.map((record) => ({
-          id: record.id,
-          company: record.name,
-          sales: normalizeSalesName(record.sales),
-          team: normalizeTeamName(record.team),
-          poid: record.id,
-          poitemId: record.id,
-          itemName: record.gubun ?? "",
-          amount: record.expected,
-          ar: record.diff,
-          overdueDays: record.overdueDays,
-          status: record.status
-        }));
-    return source.filter((record) => {
+    return arRecords.filter((record) => {
       const matchTeam = teamFilter === "all" || record.team === teamFilter;
       const matchSales = salesFilter === "all" || record.sales === salesFilter;
       const matchUser = isAdmin || record.sales === normalizeSalesName(selectedUser.salesName);
       return matchTeam && matchSales && matchUser;
     });
-  }, [analyticsRecords, arRecords, isAdmin, salesFilter, selectedUser.salesName, teamFilter]);
+  }, [arRecords, isAdmin, salesFilter, selectedUser.salesName, teamFilter]);
   const arSummary = useMemo(() => {
     const totalAr = scopedArRecords.reduce((sum, record) => sum + record.ar, 0);
     const over30 = scopedArRecords.filter((record) => record.overdueDays >= 30);
@@ -603,30 +737,30 @@ export default function CollectionsPage() {
     };
   }, [scopedArRecords]);
   const collectionSummaryRows = useMemo(() => {
-    const completed = scopedArRecords.filter((record) => record.status.includes("완료") || record.ar <= 0);
-    const partial = scopedArRecords.filter((record) => record.status.includes("부분"));
-    const unpaid = scopedArRecords.filter((record) => record.ar > 0);
-    const high = scopedArRecords.filter((record) => record.ar >= 1000000);
-    const long = scopedArRecords.filter((record) => record.overdueDays >= 30);
+    const completed = scopedRecords.filter((record) => record.status === "완료" || record.diff <= 0);
+    const partial = scopedRecords.filter((record) => record.status === "부분수금");
+    const unpaid = scopedRecords.filter((record) => record.status === "미수" || record.diff > 0);
+    const high = scopedRecords.filter((record) => record.diff >= 1000000);
+    const long = scopedRecords.filter((record) => record.overdueDays >= 30);
     return {
-      scheduled: scopedArRecords,
+      scheduled: scopedRecords,
       completed,
       partial,
       unpaid,
       high,
       long
     };
-  }, [scopedArRecords]);
+  }, [scopedRecords]);
   const collectionSummaryMetrics = useMemo(() => {
-    const sumAmount = (rows: DemoArRecord[]) => rows.reduce((sum, record) => sum + (record.amount || record.ar), 0);
-    const sumAr = (rows: DemoArRecord[]) => rows.reduce((sum, record) => sum + record.ar, 0);
+    const sumExpected = (rows: ReceivableRecord[]) => rows.reduce((sum, record) => sum + record.expected, 0);
+    const sumDiff = (rows: ReceivableRecord[]) => rows.reduce((sum, record) => sum + record.diff, 0);
     return {
-      scheduled: { count: collectionSummaryRows.scheduled.length, amount: sumAmount(collectionSummaryRows.scheduled) },
-      completed: { count: collectionSummaryRows.completed.length, amount: sumAmount(collectionSummaryRows.completed) },
-      partial: { count: collectionSummaryRows.partial.length, amount: sumAr(collectionSummaryRows.partial) },
-      unpaid: { count: collectionSummaryRows.unpaid.length, amount: sumAr(collectionSummaryRows.unpaid) },
-      high: { count: collectionSummaryRows.high.length, amount: sumAr(collectionSummaryRows.high) },
-      long: { count: collectionSummaryRows.long.length, amount: sumAr(collectionSummaryRows.long) }
+      scheduled: { count: collectionSummaryRows.scheduled.length, amount: sumExpected(collectionSummaryRows.scheduled) },
+      completed: { count: collectionSummaryRows.completed.length, amount: sumExpected(collectionSummaryRows.completed) },
+      partial: { count: collectionSummaryRows.partial.length, amount: sumDiff(collectionSummaryRows.partial) },
+      unpaid: { count: collectionSummaryRows.unpaid.length, amount: sumDiff(collectionSummaryRows.unpaid) },
+      high: { count: collectionSummaryRows.high.length, amount: sumDiff(collectionSummaryRows.high) },
+      long: { count: collectionSummaryRows.long.length, amount: sumDiff(collectionSummaryRows.long) }
     };
   }, [collectionSummaryRows]);
   const summaryFilterOptions: Array<{ key: CollectionSummaryFilter; label: string; count: number; amount: string; tone: "blue" | "green" | "orange" | "red" }> = [
@@ -635,7 +769,7 @@ export default function CollectionsPage() {
     { key: "unpaid", label: "미수금액", count: collectionSummaryMetrics.unpaid.count, amount: formatKrwShort(collectionSummaryMetrics.unpaid.amount), tone: "red" }
   ];
   const selectedSummaryRows = useMemo(
-    () => collectionSummaryRows[summaryFilter].slice().sort((a, b) => b.ar - a.ar || b.overdueDays - a.overdueDays),
+    () => collectionSummaryRows[summaryFilter].slice().sort((a, b) => b.diff - a.diff || b.expected - a.expected),
     [collectionSummaryRows, summaryFilter]
   );
   const longOverdueRows = useMemo(
@@ -688,11 +822,69 @@ export default function CollectionsPage() {
     }
 
     try {
+      const rawStatus = window.localStorage.getItem(RECEIVABLE_STATUS_KEY);
+      if (rawStatus) setUploadedReceivableRecords(JSON.parse(rawStatus) as ReceivableRecord[]);
+    } catch {
+      setUploadedReceivableRecords([]);
+    }
+
+    void fetch("/api/receivables-status")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = payload?.snapshot?.records;
+        if (!Array.isArray(records)) return;
+        setUploadedReceivableRecords(records as ReceivableRecord[]);
+        setStatusFileMessage(`공용 저장소에서 전체 수금현황 ${records.length}건을 불러왔습니다.`);
+        try {
+          window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(records));
+        } catch {
+          // Shared data still renders even when browser storage is unavailable.
+        }
+      })
+      .catch(() => {
+        // Local sample/localStorage data is still available when shared storage is not configured.
+      });
+
+    void fetch("/api/receivables-live")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = extractLiveReceivableRecords(payload);
+        if (records.length === 0) return;
+        setUploadedReceivableRecords(records);
+        setStatusFileMessage(`수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다.`);
+        try {
+          window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(records));
+        } catch {
+          // Live data still renders even when browser storage is unavailable.
+        }
+      })
+      .catch(() => {
+        // Existing shared/local data remains available when the live web app is not configured.
+      });
+
+    try {
       const rawAr = window.localStorage.getItem(AR_DEMO_KEY);
       if (rawAr) setArRecords(JSON.parse(rawAr) as DemoArRecord[]);
     } catch {
       setArRecords([]);
     }
+
+    void fetch("/api/receivables-aging")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const records = payload?.snapshot?.records;
+        if (!Array.isArray(records)) return;
+        setArRecords(records as DemoArRecord[]);
+        setArFileMessage(`공용 저장소에서 미수금 Aging ${records.length}건을 불러왔습니다.`);
+        try {
+          window.localStorage.setItem(AR_DEMO_KEY, JSON.stringify(records));
+        } catch {
+          // Shared data still renders even when browser storage is unavailable.
+        }
+      })
+      .catch(() => {
+        // Local sample/localStorage data is still available when shared storage is not configured.
+      });
 
     try {
       const rawPaymentAssignments = window.localStorage.getItem(PAYMENT_ASSIGNMENT_KEY);
@@ -875,6 +1067,66 @@ export default function CollectionsPage() {
     }
   };
 
+  const saveReceivableStatusRecords = async (records: ReceivableRecord[], sourceType: "paste" | "file") => {
+    setUploadedReceivableRecords(records);
+    try {
+      window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(records));
+    } catch {
+      // Shared save is attempted below; current screen still updates.
+    }
+
+    const uploadedAt = new Date().toISOString();
+    const snapshot = {
+      id: `receivables-status-${uploadedAt}`,
+      uploadedAt,
+      uploadedBy: selectedUser.name,
+      sourceType,
+      records
+    };
+
+    try {
+      const response = await fetch("/api/receivables-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot)
+      });
+      if (!response.ok) throw new Error("shared save failed");
+      setStatusFileMessage(`전체 수금현황 ${records.length}건 인식 · 구글 시트 저장 완료`);
+    } catch {
+      setStatusFileMessage(`전체 수금현황 ${records.length}건 인식 · 브라우저 저장만 완료`);
+    }
+  };
+
+  const recognizeReceivableStatusPaste = async () => {
+    const rows = splitPasteRows(statusPaste);
+    const parsed = parseReceivableStatusRows(rows);
+    if (parsed.length === 0) {
+      setStatusFileMessage("전체 수금현황 데이터를 인식하지 못했습니다. 표 전체를 복사해서 붙여넣어주세요.");
+      return;
+    }
+    await saveReceivableStatusRecords(parsed, "paste");
+  };
+
+  const importReceivableStatusFile = async (file: File | undefined) => {
+    if (!file) return;
+    setIsReadingFile(true);
+    try {
+      const rows = await parseSpreadsheetFile(file);
+      const parsed = parseReceivableStatusRows(rows);
+      setStatusPaste(tableRowsToText(rows));
+      if (parsed.length === 0) {
+        setStatusFileMessage(`${file.name} · 전체 수금현황 데이터를 인식하지 못했습니다.`);
+        return;
+      }
+      await saveReceivableStatusRecords(parsed, "file");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "전체 수금현황 파일을 읽지 못했습니다.";
+      setStatusFileMessage(message);
+    } finally {
+      setIsReadingFile(false);
+    }
+  };
+
   const importArFile = async (file: File | undefined) => {
     if (!file) return;
     setIsReadingFile(true);
@@ -883,7 +1135,29 @@ export default function CollectionsPage() {
       const parsed = parseArRows(rows);
       setArRecords(parsed);
       window.localStorage.setItem(AR_DEMO_KEY, JSON.stringify(parsed));
-      setArFileMessage(`${file.name} · AR ${parsed.length}건 · ${formatKrwShort(parsed.reduce((sum, record) => sum + record.ar, 0))} 인식`);
+      const uploadedAt = new Date().toISOString();
+      const snapshot = {
+        id: `receivables-aging-${uploadedAt}`,
+        uploadedAt,
+        uploadedBy: selectedUser.name,
+        fileName: file.name,
+        records: parsed
+      };
+      let saveMessage = "브라우저 임시 저장";
+
+      try {
+        const response = await fetch("/api/receivables-aging", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(snapshot)
+        });
+        if (!response.ok) throw new Error("shared save failed");
+        saveMessage = "구글 시트 저장 완료";
+      } catch {
+        saveMessage = "브라우저 저장만 완료 · 공용 저장 실패";
+      }
+
+      setArFileMessage(`${file.name} · AR ${parsed.length}건 · ${formatKrwShort(parsed.reduce((sum, record) => sum + record.ar, 0))} 인식 · ${saveMessage}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "AR 파일을 읽지 못했습니다.";
       setArFileMessage(message);
@@ -933,7 +1207,7 @@ export default function CollectionsPage() {
     >
       <div className="space-y-5">
         <section className="ops-card bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_58%,#fff7f3_100%)] p-5">
-          <div className={`grid gap-5 ${isAdmin ? "lg:grid-cols-[minmax(360px,0.72fr)_minmax(520px,1.28fr)]" : "lg:grid-cols-[1fr_260px]"}`}>
+          <div className={`grid gap-5 ${isAdmin ? "lg:grid-cols-[minmax(360px,0.72fr)_minmax(520px,1.28fr)]" : "lg:grid-cols-1"}`}>
             <div>
               <div className="flex items-center gap-2 text-[#1D50A2]">
                 <ShieldCheck size={18} />
@@ -947,14 +1221,6 @@ export default function CollectionsPage() {
               <p className="mt-2 text-[14px] font-[750] text-[#64748b]">
                 {isAdmin ? "전체 AR과 팀별/담당자별 수금률을 한 화면에서 확인합니다." : "미수, 부분수금, 입금자명 매칭 이슈를 우선순위대로 정리했습니다."}
               </p>
-              <button
-                type="button"
-                onClick={focusTopIssue}
-                className="ops-btn-primary mt-5 inline-flex h-10 items-center gap-2 px-5 text-[13px] transition hover:-translate-y-0.5 hover:bg-[#1d4ed8]"
-              >
-                지금 확인하기
-                <ArrowRight size={17} />
-              </button>
             </div>
             {isAdmin ? (
               <div className="flex min-h-[190px] flex-col justify-center rounded-[18px] border border-[#e5eaf3] bg-white p-5">
@@ -975,18 +1241,7 @@ export default function CollectionsPage() {
                 </div>
                 <p className="mt-3 text-[12px] font-[800] leading-5 text-[#64748b]">Admin은 점수보다 전체 수금 흐름과 병목을 봅니다.</p>
               </div>
-            ) : (
-              <div className="rounded-[18px] border border-[#e5eaf3] bg-white p-4">
-                <p className="text-[12px] font-[900] text-[#64748b]">오늘의 Collection Score</p>
-                <div className="mt-3 flex items-end justify-between gap-3">
-                  <p className="text-[48px] font-[950] leading-none tracking-[-0.05em] text-[#111827]">{collectionScore}<span className="text-[20px]">점</span></p>
-                  <span className={`rounded-full px-3 py-1 text-[12px] font-[950] ${scoreLabel === "Healthy" ? "bg-[#edf4ff] text-[#1D50A2]" : scoreLabel === "Attention" ? "bg-[#fff5ec] text-[#b85f18]" : "bg-[#fff5ec] text-[#b85f18]"}`}>
-                    {scoreLabel}
-                  </span>
-                </div>
-                <p className="mt-4 text-[12px] font-[800] leading-5 text-[#64748b]">현재 사용자 {selectedUser.name} · {selectedUser.accessRole.toUpperCase()}</p>
-              </div>
-            )}
+            ) : null}
           </div>
         </section>
 
@@ -1000,6 +1255,41 @@ export default function CollectionsPage() {
             </div>
             <div className="rounded-full bg-[#f8fbff] px-3 py-1.5 text-[12px] font-[900] text-[#1D50A2]">전체 수금률 {composition.collectionRate}%</div>
           </div>
+          {isAdmin ? (
+            <div className="mt-4 rounded-[18px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[13px] font-[950] text-[#111827]">전체 수금현황 업로드</p>
+                  <p className="mt-1 text-[11px] font-[750] leading-5 text-[#64748b]">
+                    ERP 전체 수금현황 표를 복사해 붙여넣으면 완료/부분수금/미수 상태가 거래처별로 저장됩니다. Aging 판단은 아래 AR 파일의 경과일을 기준으로 별도 계산합니다.
+                  </p>
+                </div>
+                <input
+                  type="file"
+                  accept=".xls,.xlsx,.csv,.tsv,.txt"
+                  onChange={(event) => importReceivableStatusFile(event.target.files?.[0])}
+                  className="block max-w-[360px] text-[12px] font-[800] text-[#475569] file:mr-3 file:rounded-full file:border-0 file:bg-[#edf4ff] file:px-3 file:py-2 file:text-[12px] file:font-[950] file:text-[#1D50A2]"
+                />
+              </div>
+              <textarea
+                value={statusPaste}
+                onChange={(event) => setStatusPaste(event.target.value)}
+                placeholder="거래처 / 팀 / 담당자 / 예정금액 / 연체일 / Aging / 상태가 포함된 전체 수금현황 표를 여기에 붙여넣으세요."
+                className="mt-3 min-h-[96px] w-full rounded-[16px] border border-[#d8e4f3] bg-white p-3 text-[12px] font-[750] leading-5 text-[#10203f] outline-none transition placeholder:text-[#94a3b8] focus:border-[#1D50A2]"
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-[800] text-[#64748b]">{statusFileMessage || "전체 수금현황과 AR Aging은 각각 별도로 업로드됩니다."}</p>
+                <button
+                  type="button"
+                  onClick={recognizeReceivableStatusPaste}
+                  disabled={!statusPaste.trim() || isReadingFile}
+                  className="ops-btn-primary h-9 px-4 text-[12px] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  전체 수금현황 인식/저장
+                </button>
+              </div>
+            </div>
+          ) : null}
           {isAdmin ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
               <span className="text-[12px] font-[950] text-[#64748b]">팀별</span>
@@ -1066,16 +1356,16 @@ export default function CollectionsPage() {
                 <p className="p-6 text-center text-[13px] font-[850] text-[#64748b]">선택한 기준에 맞는 수금 데이터가 없습니다.</p>
               ) : (
                 selectedSummaryRows.map((record) => (
-                  <div key={`${record.id}-${record.company}`} className="grid grid-cols-[minmax(220px,1fr)_120px_120px_100px_96px_110px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
+                  <div key={`${record.id}-${record.name}`} className="grid grid-cols-[minmax(220px,1fr)_120px_120px_100px_96px_110px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
                     <span className="min-w-0">
-                      <b className="block truncate font-[950] text-[#111827]">{record.company}</b>
-                      <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#64748b]">{record.poid || "수금/AR"} · {record.poitemId || record.itemName || "-"}</span>
+                      <b className="block truncate font-[950] text-[#111827]">{record.name}</b>
+                      <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#64748b]">{record.basis || "전체 수금현황"} · {normalizeTeamName(record.team)}</span>
                     </span>
-                    <span className="truncate font-[850] text-[#475569]">{record.sales || "미매칭"}</span>
-                    <span className="truncate font-[900] text-[#111827]">{formatKrwShort(record.amount || record.ar)}</span>
-                    <span className="truncate font-[950] text-[#b85f18]">{formatKrwShort(record.ar)}</span>
+                    <span className="truncate font-[850] text-[#475569]">{normalizeSalesName(record.sales) || "미매칭"}</span>
+                    <span className="truncate font-[900] text-[#111827]">{formatKrwShort(record.expected)}</span>
+                    <span className="truncate font-[950] text-[#b85f18]">{formatKrwShort(record.diff)}</span>
                     <span className={record.overdueDays >= 30 ? "font-[950] text-[#b85f18]" : "font-[850] text-[#64748b]"}>{record.overdueDays}일</span>
-                    <span className="rounded-full bg-[#f8fbff] px-3 py-1 text-center text-[11px] font-[950] text-[#64748b]">{record.status || (record.ar > 0 ? "미수" : "완료")}</span>
+                    <span className={`rounded-full px-3 py-1 text-center text-[11px] font-[950] ${statusStyle(record.status)}`}>{record.status}</span>
                   </div>
                 ))
               )}
