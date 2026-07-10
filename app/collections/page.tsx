@@ -1218,41 +1218,21 @@ export default function CollectionsPage() {
     >
       <div className="space-y-5">
         <section className="ops-card bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_58%,#fff7f3_100%)] p-5">
-          <div className={`grid gap-5 ${isAdmin ? "lg:grid-cols-[minmax(360px,0.72fr)_minmax(520px,1.28fr)]" : "lg:grid-cols-1"}`}>
+          <div className="grid gap-5 lg:grid-cols-1">
             <div>
               <div className="flex items-center gap-2 text-[#1D50A2]">
                 <ShieldCheck size={18} />
-                <p className="text-[11px] font-[950] uppercase tracking-[0.08em]">{isAdmin ? "VIPS COLLECTION VIEW" : "MY COLLECTION VIEW"}</p>
+                <p className="text-[11px] font-[950] uppercase tracking-[0.08em]">MY COLLECTION VIEW</p>
               </div>
               <h2 className="mt-3 text-[28px] font-[950] leading-tight tracking-[-0.03em] text-[#111827]">
                 {isAdmin
-                  ? `${selectedUser.name}님, 회사 전체 수금 현황을 관제합니다.`
+                  ? `${selectedUser.name}님, 전체 수금 현황에서 확인해야 할 건이 ${openIssues.length}건 있습니다.`
                   : `${selectedUser.name}님, 오늘 확인해야 할 수금이 ${openIssues.length}건 있습니다.`}
               </h2>
               <p className="mt-2 text-[14px] font-[750] text-[#64748b]">
-                {isAdmin ? "전체 AR과 팀별/담당자별 수금률을 한 화면에서 확인합니다." : "미수, 부분수금, 입금자명 매칭 이슈를 우선순위대로 정리했습니다."}
+                {isAdmin ? "Sales 전체의 미수, 부분수금, 입금자명 매칭 이슈를 동일한 화면 구조로 확인합니다." : "미수, 부분수금, 입금자명 매칭 이슈를 우선순위대로 정리했습니다."}
               </p>
             </div>
-            {isAdmin ? (
-              <div className="flex min-h-[190px] flex-col justify-center rounded-[18px] border border-[#e5eaf3] bg-white p-5">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[12px] font-[900] text-[#64748b]">회사 전체 수금 관제</p>
-                    <p className="mt-2 max-w-[360px] text-[12px] font-[750] leading-5 text-[#64748b]">
-                      Admin이 업로드한 Aging 데이터를 기준으로 전체 수금률, AR, 장기미수 병목을 확인합니다.
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[11px] font-[950] text-[#1D50A2]">Admin View</span>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-4">
-                  <MiniAmount label="전체 수금률" value={`${adminSummary.collectionRate}%`} strong />
-                  <MiniAmount label="전체 AR" value={formatKrwShort(adminSummary.unpaidAmount)} strong />
-                  <MiniAmount label="확인 필요" value={`${buildCollectionIssues(recordsWithAssignments).length}건`} />
-                  <MiniAmount label="30일 이상" value={`${adminSummary.longOverdueCount}건`} />
-                </div>
-                <p className="mt-3 text-[12px] font-[800] leading-5 text-[#64748b]">Admin은 점수보다 전체 수금 흐름과 병목을 봅니다.</p>
-              </div>
-            ) : null}
           </div>
         </section>
 
@@ -1266,40 +1246,8 @@ export default function CollectionsPage() {
             </div>
             <div className="rounded-full bg-[#f8fbff] px-3 py-1.5 text-[12px] font-[900] text-[#1D50A2]">전체 수금률 {composition.collectionRate}%</div>
           </div>
-          {isAdmin ? (
-            <div className="mt-4 rounded-[18px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-[13px] font-[950] text-[#111827]">전체 수금현황 업로드</p>
-                  <p className="mt-1 text-[11px] font-[750] leading-5 text-[#64748b]">
-                    ERP 전체 수금현황 표를 복사해 붙여넣으면 완료/부분수금/미수 상태가 거래처별로 저장됩니다. Aging 판단은 아래 AR 파일의 경과일을 기준으로 별도 계산합니다.
-                  </p>
-                </div>
-                <input
-                  type="file"
-                  accept=".xls,.xlsx,.csv,.tsv,.txt"
-                  onChange={(event) => importReceivableStatusFile(event.target.files?.[0])}
-                  className="block max-w-[360px] text-[12px] font-[800] text-[#475569] file:mr-3 file:rounded-full file:border-0 file:bg-[#edf4ff] file:px-3 file:py-2 file:text-[12px] file:font-[950] file:text-[#1D50A2]"
-                />
-              </div>
-              <textarea
-                value={statusPaste}
-                onChange={(event) => setStatusPaste(event.target.value)}
-                placeholder="거래처 / 팀 / 담당자 / 예정금액 / 연체일 / Aging / 상태가 포함된 전체 수금현황 표를 여기에 붙여넣으세요."
-                className="mt-3 min-h-[96px] w-full rounded-[16px] border border-[#d8e4f3] bg-white p-3 text-[12px] font-[750] leading-5 text-[#10203f] outline-none transition placeholder:text-[#94a3b8] focus:border-[#1D50A2]"
-              />
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] font-[800] text-[#64748b]">{statusFileMessage || "전체 수금현황과 AR Aging은 각각 별도로 업로드됩니다."}</p>
-                <button
-                  type="button"
-                  onClick={recognizeReceivableStatusPaste}
-                  disabled={!statusPaste.trim() || isReadingFile}
-                  className="ops-btn-primary h-9 px-4 text-[12px] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  전체 수금현황 인식/저장
-                </button>
-              </div>
-            </div>
+          {isAdmin && statusFileMessage ? (
+            <p className="mt-3 rounded-[16px] bg-[#fbfdff] px-4 py-3 text-[12px] font-[800] text-[#64748b]">{statusFileMessage}</p>
           ) : null}
           {isAdmin ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
@@ -1384,9 +1332,7 @@ export default function CollectionsPage() {
           </div>
         </section>
 
-        {isAdmin ? <section className="ops-card bg-[#fbfdff] px-4 py-3 text-[12px] font-[800] text-[#64748b]">
-          전체 {recordsWithAssignments.length}건 중 담당자 매핑 성공 {mappedRecordsCount}건 · 담당자 미매칭 {unmappedRecords.length}건 · 현재 사용자 {selectedUser.name} 기준 {visibleRecords.length}건 표시
-        </section> : null}
+        {isAdmin ? null : null}
 
         <section className="ops-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1399,18 +1345,10 @@ export default function CollectionsPage() {
                   : "Admin이 업로드한 AR Aging 데이터 중 내 담당 거래처만 보여줍니다."}
               </p>
             </div>
-            {isAdmin ? <div className="min-w-[320px] rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
-              <input
-                type="file"
-                accept=".xls,.xlsx,.csv,.tsv,.txt"
-                onChange={(event) => importArFile(event.target.files?.[0])}
-                className="block w-full text-[12px] font-[800] text-[#475569] file:mr-3 file:rounded-full file:border-0 file:bg-[#edf4ff] file:px-3 file:py-2 file:text-[12px] file:font-[950] file:text-[#1D50A2]"
-              />
-              <p className="mt-2 text-[11px] font-[750] text-[#64748b]">COMPANY, SALES, POID, POITEMID, 경과일, AR 컬럼을 인식합니다.</p>
-              {arFileMessage ? <p className="mt-1 text-[11px] font-[900] text-[#1D50A2]">{arFileMessage}</p> : null}
-            </div> : (
+            {(
               <div className="rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-4 py-3 text-[12px] font-[850] text-[#64748b]">
                 현재 사용자 <b className="text-[#1D50A2]">{selectedUser.name}</b> 기준 {arSummary.totalCount}건 표시
+                {isAdmin ? <span className="ml-1 text-[#94a3b8]">· 전체 직원 범위</span> : null}
               </div>
             )}
           </div>
@@ -1825,7 +1763,7 @@ export default function CollectionsPage() {
           />
         </section>
 
-        {isAdmin ? (
+        {false ? (
           <>
             <section className="grid gap-5 xl:grid-cols-2">
               <AdminPanel title="팀별 성과" rows={teamStats.map((row) => [row.label, `${row.rate}%`, formatKrwShort(row.remain)])} />
@@ -1921,13 +1859,12 @@ export default function CollectionsPage() {
           </>
         ) : null}
 
-        {!isAdmin ? (
-          <section className="ops-card p-4">
+        <section className="ops-card p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">내 담당 미매칭 수금건</h3>
+                <h3 className="text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">{isAdmin ? "담당 미매칭 수금건" : "내 담당 미매칭 수금건"}</h3>
                 <p className="mt-1 text-[13px] font-[750] text-[#64748b]">
-                  VIPS/Admin이 업로드하고 담당자로 지정한 미매칭 수금건입니다.
+                  {isAdmin ? "전체 Sales 기준으로 담당 지정이 필요한 미매칭 수금건입니다." : "VIPS/Admin이 업로드하고 담당자로 지정한 미매칭 수금건입니다."}
                 </p>
               </div>
               <span className="rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#b85f18]">{visibleUnmatchedPayments.length}건</span>
@@ -1962,8 +1899,7 @@ export default function CollectionsPage() {
                 )}
               </div>
             </div>
-          </section>
-        ) : null}
+        </section>
       </div>
 
       {activeIssue ? (
