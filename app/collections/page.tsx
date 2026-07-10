@@ -163,9 +163,19 @@ function parseAmount(value: string) {
 
 function normalizeCollectionStatus(value: string): "완료" | "부분수금" | "미수" {
   const text = String(value ?? "").trim();
-  if (text.includes("부분")) return "부분수금";
-  if (text.includes("미수")) return "미수";
-  if (text.includes("완료") || text.includes("취소")) return "완료";
+  if (text.includes("부분") || text.includes("遺遺") || text.includes("遺")) return "부분수금";
+  if (text.includes("미수") || text.includes("誘몄닔")) return "미수";
+  if (text.includes("완료") || text.includes("취소") || text.includes("꾨즺") || text.includes("즺")) return "완료";
+  return "미수";
+}
+
+function normalizeCollectionStatusByAmounts(value: string, expected: number, paid: number, diff: number) {
+  const raw = String(value ?? "").trim();
+  if (raw.includes("부분") || raw.includes("遺遺") || raw.includes("遺")) return "부분수금";
+  if (raw.includes("미수") || raw.includes("誘몄닔")) return "미수";
+  if (raw.includes("완료") || raw.includes("취소") || raw.includes("꾨즺") || raw.includes("즺")) return "완료";
+  if (expected > 0 && diff <= 0) return "완료";
+  if (expected > 0 && paid > 0 && diff > 0) return "부분수금";
   return "미수";
 }
 
@@ -521,13 +531,14 @@ function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: numb
   const expected = Number(record.expected ?? record.expectedAmount ?? 0);
   const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
   const explicitDiff = Number(record.diff ?? record.unpaidAmount ?? NaN);
-  const status = normalizeCollectionStatus(record.status ?? "");
+  const provisionalStatus = normalizeCollectionStatus(record.status ?? "");
   const diff = Number.isFinite(explicitDiff)
     ? Math.max(0, explicitDiff)
-    : status === "완료"
+    : provisionalStatus === "완료"
       ? 0
       : Math.max(0, expected - explicitPaid);
   const paid = explicitPaid || Math.max(0, expected - diff);
+  const status = normalizeCollectionStatusByAmounts(record.status ?? "", expected, paid, diff);
 
   return {
     id: String(record.id ?? `live-${normalizeMatchText(name) || "row"}-${index}`),
