@@ -28,6 +28,9 @@ export type ClosingIssue = {
   uploadedBy: string;
   status: "open" | "done" | "dismissed";
   memo?: string;
+  erpUrl?: string;
+  trackingUrl?: string;
+  orderUrl?: string;
 };
 
 export type ClosingSnapshot = {

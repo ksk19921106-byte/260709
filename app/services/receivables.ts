@@ -18,8 +18,15 @@ export type ReceivableRecord = {
   gubun?: string;
   basis?: string;
   matched_payer?: string;
+  collectionMonth?: string;
+  dueDate?: string;
   overdueDays: number;
   agingBucket: string;
+  erpUrl?: string;
+  trackingUrl?: string;
+  orderUrl?: string;
+  poUrl?: string;
+  link?: string;
 };
 
 export type CollectionIssue = {
@@ -97,7 +104,9 @@ export const SALES_ALIAS_MAP: Record<string, string> = {
 export function normalizeSalesName(value?: string | null) {
   if (!value) return "";
   const key = String(value).trim();
-  return SALES_ALIAS_MAP[key] || key;
+  const upperKey = key.toUpperCase();
+  const canonicalKey = Object.keys(SALES_ALIAS_MAP).find((alias) => alias.toUpperCase() === upperKey);
+  return SALES_ALIAS_MAP[key] || (canonicalKey ? SALES_ALIAS_MAP[canonicalKey] : key);
 }
 
 export function normalizeTeamName(value?: string | null) {

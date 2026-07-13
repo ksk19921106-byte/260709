@@ -33,9 +33,10 @@ import {
 } from "../services/receivables";
 import type { ClosingIssue, ClosingSnapshot } from "../services/closingPasteParser";
 import { fetchBlockedUsers, updateBlockedUser, type BlockedUserMap, type MonthEndGateStatus } from "../services/monthEndGate";
-import { fetchMonthEndRmaSnapshot, type MonthEndRmaSnapshot, type MonthEndRmaRecord } from "../services/monthEndRma";
+import { type MonthEndRmaSnapshot, type MonthEndRmaRecord } from "../services/monthEndRma";
 import {
   fetchMonthEndActionRequests,
+  saveMonthEndActionRequest,
   updateMonthEndActionRequestStatus,
   type MonthEndActionRequest,
   type MonthEndActionStatus
@@ -49,6 +50,8 @@ type DemoArRecord = {
   company: string;
   sales: string;
   team: string;
+  collectionMonth?: string;
+  dueDate?: string;
   poid?: string;
   poitemId?: string;
   itemName?: string;
@@ -57,6 +60,23 @@ type DemoArRecord = {
   overdueDays: number;
   status: string;
 };
+
+type ReceivablesStatusSnapshot = {
+  id: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  sourceType?: "paste" | "file";
+  records: ReceivableRecord[];
+};
+
+type ReceivablesAgingSnapshot = {
+  id: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  fileName?: string;
+  records: DemoArRecord[];
+};
+
 type GatekeeperRow = {
   name: string;
   team: string;
@@ -162,6 +182,64 @@ function normalizeLooseText(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function normalizeOpsMonth(value?: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-") return "";
+  const iso = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}`;
+  const short = raw.match(/(0?[1-9]|1[0-2])\s*월/);
+  if (short) return `${new Date().getFullYear()}-${String(Number(short[1])).padStart(2, "0")}`;
+  return "";
+}
+
+function monthFromDateText(value?: string | null) {
+  return normalizeOpsMonth(value);
+}
+
+function requestMonth(item: RequestItem) {
+  return monthFromDateText(item.requestedAt);
+}
+
+function receivableMonth(record: ReceivableRecord) {
+  return normalizeOpsMonth(record.collectionMonth ?? record.dueDate);
+}
+
+function arMonth(record: DemoArRecord) {
+  return normalizeOpsMonth(record.collectionMonth ?? record.dueDate);
+}
+
+function monthEndSnapshotMonth(snapshot: ClosingSnapshot) {
+  return normalizeOpsMonth(snapshot.closingMonth || snapshot.uploadedAt);
+}
+
+function rmaSnapshotMonth(snapshot: MonthEndRmaSnapshot) {
+  return normalizeOpsMonth(snapshot.uploadedAt);
+}
+
+function receivableSnapshotMonth(snapshot: ReceivablesStatusSnapshot) {
+  return normalizeOpsMonth(snapshot.records.map((record) => record.collectionMonth || record.dueDate || "").find(Boolean) || snapshot.uploadedAt);
+}
+
+function agingSnapshotMonth(snapshot: ReceivablesAgingSnapshot) {
+  return normalizeOpsMonth(snapshot.records.map((record) => record.collectionMonth || record.dueDate || "").find(Boolean) || snapshot.uploadedAt);
+}
+
+function latestByMonth<T>(items: T[], monthOf: (item: T) => string, uploadedAtOf: (item: T) => string) {
+  const map = new Map<string, T>();
+  for (const item of [...items].sort((a, b) => uploadedAtOf(b).localeCompare(uploadedAtOf(a)))) {
+    const month = monthOf(item);
+    if (month && !map.has(month)) map.set(month, item);
+  }
+  return Array.from(map.values());
+}
+
+function activeSnapshots<T>(items: T[], monthFilter: string, monthOf: (item: T) => string, uploadedAtOf: (item: T) => string) {
+  if (monthFilter === "all") return latestByMonth(items, monthOf, uploadedAtOf);
+  const scoped = items.filter((item) => monthOf(item) === monthFilter);
+  const latest = [...scoped].sort((a, b) => uploadedAtOf(b).localeCompare(uploadedAtOf(a)))[0];
+  return latest ? [latest] : [];
+}
+
 function normalizeLiveStatus(value: unknown, expected: number, paid: number, diff: number): ReceivableRecord["status"] {
   const text = normalizeLooseText(value);
   if (text.includes("완료") || text.includes("?꾨즺")) return "완료";
@@ -196,6 +274,8 @@ function normalizeLiveReceivableRecord(record: Record<string, unknown>, index: n
     gubun: normalizeLooseText(record.gubun) || undefined,
     basis: normalizeLooseText(record.basis) || "수금현황 웹앱 연동",
     matched_payer: normalizeLooseText(record.matched_payer ?? record.matchedPayer) || undefined,
+    collectionMonth: normalizeOpsMonth(record.collectionMonth ?? record.month ?? record.dueDate ?? record.expectedDate ?? record.date),
+    dueDate: normalizeLooseText(record.dueDate ?? record.expectedDate ?? record.date) || undefined,
     overdueDays,
     agingBucket: normalizeLooseText(record.agingBucket) || (overdueDays > 30 ? "30일초과" : overdueDays > 21 ? "30일이내" : overdueDays > 14 ? "21일이내" : overdueDays > 7 ? "14일이내" : "7일이내")
   };
@@ -782,7 +862,7 @@ function CollectionControlTower({
           <KpiCard icon={WalletCards} label="수금예정액" value={compactKrw(summary.expected)} helper={`${records.length}건`} tone="blue" />
           <KpiCard icon={CheckCircle2} label="수금 완료금액" value={compactKrw(summary.completedAmount)} helper={`완료 기준`} tone="green" />
           <KpiCard icon={AlertTriangle} label="미수금액" value={compactKrw(summary.unpaidAmount)} helper={`${summary.issues.length}건 확인`} tone="orange" />
-          <KpiCard icon={ShieldAlert} label="담당자 미매칭" value={`${unmatchedRecords.length}건`} helper="담당자 지정 필요" tone="red" />
+          <KpiCard icon={ShieldAlert} label="전체 수금률" value={`${summary.collectionRate}%`} helper="완료금액 / 수금예정액" tone="blue" />
         </div>
       </section>
 
@@ -820,8 +900,8 @@ function CollectionControlTower({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
-        <OpsMiniPanel title="팀별 성과" rows={teamStats.map((row) => [row.label, `${row.rate}%`, compactKrw(row.remain)])} />
-        <OpsMiniPanel title="담당자별 성과" rows={salesStats.slice(0, 10).map((row) => [row.label, `${row.rate}%`, `${row.count}건`])} />
+        <OpsMiniPanel title="팀별 성과" rows={teamStats.map((row) => [row.label, compactKrw(row.remain), `${row.rate}%`])} />
+        <OpsMiniPanel title="담당자별 성과" rows={salesStats.slice(0, 10).map((row) => [row.label, compactKrw(row.remain), `${row.rate}%`])} />
       </section>
 
       <section className="ops-card p-4">
@@ -1240,6 +1320,195 @@ function actionStatusClass(status: MonthEndActionStatus) {
   return "bg-[#edf4ff] text-[#1D50A2]";
 }
 
+function erpSyncLabel(status: MonthEndActionRequest["erpSyncStatus"] | undefined) {
+  if (status === "synced") return "처리 완료";
+  if (status === "pending") return "전송 대기";
+  return "API 연동 전";
+}
+
+function erpSyncClass(status: MonthEndActionRequest["erpSyncStatus"] | undefined) {
+  if (status === "synced") return "bg-[#edfdf5] text-[#15803d]";
+  if (status === "pending") return "bg-[#fff5ec] text-[#F39945]";
+  return "bg-[#f1f5f9] text-[#64748b]";
+}
+
+function monthEndActionLabel(issueType: ClosingIssue["issueType"]) {
+  if (issueType === "invoice_required") return "계산서발행";
+  if (issueType === "shipment_check") return "출고진행";
+  return "사유확인";
+}
+
+type MonthEndActionQueueItem = {
+  id: string;
+  issue?: ClosingIssue;
+  request?: MonthEndActionRequest;
+  sales: string;
+  company: string;
+  status: MonthEndActionStatus;
+  issueLabel: string;
+  memo: string;
+  actionLabel: string;
+  erpSyncStatus: MonthEndActionRequest["erpSyncStatus"];
+  amount: number;
+  requestedAt?: string;
+};
+
+function buildMonthEndActionQueue(issues: ClosingIssue[], requests: MonthEndActionRequest[]) {
+  const requestByIssue = new Map(requests.map((request) => [request.issueId, request]));
+  const issueIds = new Set(issues.map((issue) => issue.id));
+  const issueItems = issues
+    .filter((issue) => !["collection_check", "deduct_check", "sales_unshipped"].includes(issue.issueType))
+    .map((issue): MonthEndActionQueueItem => {
+      const request = requestByIssue.get(issue.id);
+      return {
+        id: request?.id ?? `issue-${issue.id}`,
+        issue,
+        request,
+        sales: issue.iSales || issue.fSales || "-",
+        company: issue.company,
+        status: request?.status ?? "received",
+        issueLabel: issue.issueLabel,
+        memo: request?.memo || issue.memo || "Sales 사유 확인 필요",
+        actionLabel: monthEndActionLabel(issue.issueType),
+        erpSyncStatus: request?.erpSyncStatus ?? "mock",
+        amount: issue.amount,
+        requestedAt: request?.requestedAt
+      };
+    });
+  const extraRequestItems = requests
+    .filter((request) => !issueIds.has(request.issueId))
+    .map((request): MonthEndActionQueueItem => ({
+      id: request.id,
+      request,
+      sales: request.iSales || request.fSales || "-",
+      company: request.company,
+      status: request.status,
+      issueLabel: request.issueLabel,
+      memo: request.memo || "Sales 사유 확인 필요",
+      actionLabel: monthEndActionLabel(request.issueType),
+      erpSyncStatus: request.erpSyncStatus,
+      amount: request.amount,
+      requestedAt: request.requestedAt
+    }));
+  return [...issueItems, ...extraRequestItems].sort((a, b) => {
+    const statusRank = (item: MonthEndActionQueueItem) => item.status === "done" ? 1 : 0;
+    return statusRank(a) - statusRank(b) || b.amount - a.amount;
+  });
+}
+
+function MonthEndActionQueue({
+  issues,
+  requests,
+  onIssueStatusChange,
+  onStatusChange
+}: {
+  issues: ClosingIssue[];
+  requests: MonthEndActionRequest[];
+  onIssueStatusChange: (issue: ClosingIssue, status: MonthEndActionStatus) => void;
+  onStatusChange: (id: string, status: MonthEndActionStatus) => void;
+}) {
+  const [queueFilter, setQueueFilter] = useState<"open" | "done" | "all">("open");
+  const queue = useMemo(() => buildMonthEndActionQueue(issues, requests), [issues, requests]);
+  const openCount = queue.filter((item) => item.status !== "done").length;
+  const doneCount = queue.filter((item) => item.status === "done").length;
+  const visibleQueue = queue.filter((item) => {
+    if (queueFilter === "open") return item.status !== "done";
+    if (queueFilter === "done") return item.status === "done";
+    return true;
+  });
+
+  const changeStatus = (item: MonthEndActionQueueItem, status: MonthEndActionStatus) => {
+    if (item.request) {
+      onStatusChange(item.request.id, status);
+      return;
+    }
+    if (item.issue) onIssueStatusChange(item.issue, status);
+  };
+
+  return (
+    <section className="ops-card overflow-hidden p-0">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#eef2f7] px-5 py-5">
+        <div>
+          <p className="text-[11px] font-[950] uppercase tracking-[0.08em] text-[#1D50A2]">ACTION QUEUE</p>
+          <h2 className="mt-1 text-[20px] font-[950] tracking-[-0.03em] text-[#111827]">월마감 조치 대기</h2>
+          <p className="mt-1 text-[12px] font-[750] text-[#64748b]">
+            Sales가 입력한 사유와 월마감 이슈를 한 곳에서 확인하고, ERP 연동 전까지 Admin 처리 상태를 관리합니다.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: "open" as const, label: `미처리 ${openCount}건` },
+            { key: "done" as const, label: `처리완료 ${doneCount}건` },
+            { key: "all" as const, label: `전체 ${queue.length}건` }
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setQueueFilter(item.key)}
+              className={`h-9 rounded-full px-3 text-[12px] font-[950] transition ${
+                queueFilter === item.key ? "bg-[#1D50A2] text-white" : "bg-[#f8fbff] text-[#64748b] hover:bg-[#edf4ff] hover:text-[#1D50A2]"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="max-h-[520px] overflow-auto p-4">
+        <div className="min-w-[1120px]">
+          <div className="grid grid-cols-[110px_minmax(180px,1fr)_150px_minmax(220px,1.1fr)_130px_130px_180px] gap-3 rounded-[16px] bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+            <span>Sales</span>
+            <span>업체명</span>
+            <span>상태</span>
+            <span>입력 사유</span>
+            <span>요청 액션</span>
+            <span>ERP 연동 상태</span>
+            <span className="text-right">Admin 처리</span>
+          </div>
+
+          <div className="mt-2 grid gap-2">
+            {visibleQueue.length === 0 ? (
+              <div className="rounded-[18px] border border-dashed border-[#dce6f3] bg-[#fbfdff] px-4 py-8 text-center">
+                <p className="text-[13px] font-[900] text-[#64748b]">표시할 월마감 조치 큐가 없습니다.</p>
+              </div>
+            ) : (
+              visibleQueue.map((item) => (
+                <div key={item.id} className="grid grid-cols-[110px_minmax(180px,1fr)_150px_minmax(220px,1.1fr)_130px_130px_180px] items-center gap-3 rounded-[18px] border border-[#edf2f8] bg-white px-4 py-3 text-[12px]">
+                  <span className="font-[950] text-[#111827]">{item.sales}</span>
+                  <span className="min-w-0">
+                    <b className="block truncate font-[950] text-[#111827]">{item.company}</b>
+                    <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#94a3b8]">{krw(item.amount)}</span>
+                  </span>
+                  <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-[950] ${actionStatusClass(item.status)}`}>
+                    {actionStatusLabel(item.status)}
+                  </span>
+                  <span className="min-w-0">
+                    <b className="block truncate font-[900] text-[#475569]">{item.issueLabel}</b>
+                    <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#64748b]">{item.memo}</span>
+                  </span>
+                  <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-center text-[11px] font-[950] text-[#1D50A2]">{item.actionLabel}</span>
+                  <span className={`rounded-full px-3 py-1 text-center text-[11px] font-[950] ${erpSyncClass(item.erpSyncStatus)}`}>
+                    {erpSyncLabel(item.erpSyncStatus)}
+                  </span>
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => changeStatus(item, "inProgress")} className="ops-btn-secondary h-8 px-3 text-[11px]">
+                      처리중
+                    </button>
+                    <button type="button" onClick={() => changeStatus(item, "done")} className="ops-btn-primary h-8 px-3 text-[11px]">
+                      완료
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MonthEndActionRequestsSection({
   requests,
   onStatusChange
@@ -1310,14 +1579,19 @@ export default function VipsOpsPage() {
   const { selectedUser } = useSelectedUser();
   const [requests, setRequests] = useState<RequestItem[]>([]);
   const [closingSnapshot, setClosingSnapshot] = useState<ClosingSnapshot | null>(null);
+  const [closingSnapshots, setClosingSnapshots] = useState<ClosingSnapshot[]>([]);
   const [rmaSnapshot, setRmaSnapshot] = useState<MonthEndRmaSnapshot | null>(null);
+  const [rmaSnapshots, setRmaSnapshots] = useState<MonthEndRmaSnapshot[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<BlockedUserMap>({});
   const [monthEndActionRequests, setMonthEndActionRequests] = useState<MonthEndActionRequest[]>([]);
   const [selectedMonthEndCard, setSelectedMonthEndCard] = useState<MonthEndOpsCard | null>(null);
   const [selectedCollectionCard, setSelectedCollectionCard] = useState<CollectionOpsCard | null>(null);
   const [activeTab, setActiveTab] = useState<VipsOpsTab>("monthEnd");
+  const [monthFilter, setMonthFilter] = useState("all");
   const [collectionRecords, setCollectionRecords] = useState<ReceivableRecord[]>(receivableRecords);
+  const [collectionSnapshots, setCollectionSnapshots] = useState<ReceivablesStatusSnapshot[]>([]);
   const [arRecords, setArRecords] = useState<DemoArRecord[]>([]);
+  const [arSnapshots, setArSnapshots] = useState<ReceivablesAgingSnapshot[]>([]);
   const [collectionSourceMessage, setCollectionSourceMessage] = useState("기본 샘플 데이터 기준으로 표시 중입니다.");
   const [loading, setLoading] = useState(true);
 
@@ -1332,12 +1606,25 @@ export default function VipsOpsPage() {
 
     fetch("/api/month-end-snapshot", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: { snapshot?: ClosingSnapshot | null } | null) => setClosingSnapshot(data?.snapshot ?? null))
-      .catch(() => setClosingSnapshot(null));
+      .then((data: { snapshot?: ClosingSnapshot | null; history?: ClosingSnapshot[] } | null) => {
+        setClosingSnapshot(data?.snapshot ?? null);
+        setClosingSnapshots(Array.isArray(data?.history) ? data.history : data?.snapshot ? [data.snapshot] : []);
+      })
+      .catch(() => {
+        setClosingSnapshot(null);
+        setClosingSnapshots([]);
+      });
 
-    fetchMonthEndRmaSnapshot()
-      .then(setRmaSnapshot)
-      .catch(() => setRmaSnapshot(null));
+    fetch("/api/month-end-rma", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { snapshot?: MonthEndRmaSnapshot | null; history?: MonthEndRmaSnapshot[] } | null) => {
+        setRmaSnapshot(data?.snapshot ?? null);
+        setRmaSnapshots(Array.isArray(data?.history) ? data.history : data?.snapshot ? [data.snapshot] : []);
+      })
+      .catch(() => {
+        setRmaSnapshot(null);
+        setRmaSnapshots([]);
+      });
 
     fetch("/api/receivables-status", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -1345,6 +1632,7 @@ export default function VipsOpsPage() {
         const records = payload?.snapshot?.records;
         if (!Array.isArray(records)) return;
         setCollectionRecords(records as ReceivableRecord[]);
+        setCollectionSnapshots(Array.isArray(payload?.history) ? payload.history : payload?.snapshot ? [payload.snapshot] : []);
         setCollectionSourceMessage(`공용 저장소 전체 수금현황 ${records.length}건 기준입니다.`);
       })
       .catch(() => {
@@ -1369,6 +1657,7 @@ export default function VipsOpsPage() {
         const records = payload?.snapshot?.records;
         if (!Array.isArray(records)) return;
         setArRecords(records as DemoArRecord[]);
+        setArSnapshots(Array.isArray(payload?.history) ? payload.history : payload?.snapshot ? [payload.snapshot] : []);
       })
       .catch(() => setArRecords([]));
 
@@ -1382,11 +1671,74 @@ export default function VipsOpsPage() {
     };
   }, []);
 
-  const closingIssues = useMemo(() => openClosingIssues(closingSnapshot), [closingSnapshot]);
+  const monthOptions = useMemo(() => {
+    const months = new Set<string>();
+    closingSnapshots.forEach((snapshot) => {
+      const month = monthEndSnapshotMonth(snapshot);
+      if (month) months.add(month);
+    });
+    rmaSnapshots.forEach((snapshot) => {
+      const month = rmaSnapshotMonth(snapshot);
+      if (month) months.add(month);
+    });
+    collectionSnapshots.forEach((snapshot) => {
+      const month = receivableSnapshotMonth(snapshot);
+      if (month) months.add(month);
+    });
+    arSnapshots.forEach((snapshot) => {
+      const month = agingSnapshotMonth(snapshot);
+      if (month) months.add(month);
+    });
+    requests.forEach((request) => {
+      const month = requestMonth(request);
+      if (month) months.add(month);
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [arSnapshots, closingSnapshots, collectionSnapshots, requests, rmaSnapshots]);
+  const activeClosingSnapshots = useMemo(
+    () => activeSnapshots(closingSnapshots.length > 0 ? closingSnapshots : closingSnapshot ? [closingSnapshot] : [], monthFilter, monthEndSnapshotMonth, (snapshot) => snapshot.uploadedAt),
+    [closingSnapshot, closingSnapshots, monthFilter]
+  );
+  const activeRmaSnapshots = useMemo(
+    () => activeSnapshots(rmaSnapshots.length > 0 ? rmaSnapshots : rmaSnapshot ? [rmaSnapshot] : [], monthFilter, rmaSnapshotMonth, (snapshot) => snapshot.uploadedAt),
+    [monthFilter, rmaSnapshot, rmaSnapshots]
+  );
+  const activeCollectionSnapshots = useMemo(
+    () => activeSnapshots(collectionSnapshots, monthFilter, receivableSnapshotMonth, (snapshot) => snapshot.uploadedAt),
+    [collectionSnapshots, monthFilter]
+  );
+  const activeArSnapshots = useMemo(
+    () => activeSnapshots(arSnapshots, monthFilter, agingSnapshotMonth, (snapshot) => snapshot.uploadedAt),
+    [arSnapshots, monthFilter]
+  );
+  const closingIssues = useMemo(() => {
+    const snapshots = activeClosingSnapshots.length > 0 ? activeClosingSnapshots : closingSnapshot ? [closingSnapshot] : [];
+    return snapshots.flatMap((snapshot) => openClosingIssues(snapshot));
+  }, [activeClosingSnapshots, closingSnapshot]);
   const useSnapshotClosing = closingIssues.length > 0;
-  const rmaRecords = useMemo(() => rmaSnapshot?.records ?? [], [rmaSnapshot]);
+  const rmaRecords = useMemo(() => {
+    const snapshots = activeRmaSnapshots.length > 0 ? activeRmaSnapshots : rmaSnapshot ? [rmaSnapshot] : [];
+    return snapshots.flatMap((snapshot) => snapshot.records ?? []);
+  }, [activeRmaSnapshots, rmaSnapshot]);
+  const filteredCollectionRecords = useMemo(() => {
+    if (activeCollectionSnapshots.length > 0) return activeCollectionSnapshots.flatMap((snapshot) => snapshot.records ?? []);
+    if (monthFilter === "all") return collectionRecords;
+    return collectionRecords.filter((record) => receivableMonth(record) === monthFilter);
+  }, [activeCollectionSnapshots, collectionRecords, monthFilter]);
+  const filteredArRecords = useMemo(() => {
+    if (activeArSnapshots.length > 0) return activeArSnapshots.flatMap((snapshot) => snapshot.records ?? []);
+    if (monthFilter === "all") return arRecords;
+    return arRecords.filter((record) => {
+      const recordMonth = arMonth(record);
+      return !recordMonth || recordMonth === monthFilter;
+    });
+  }, [activeArSnapshots, arRecords, monthFilter]);
+  const filteredRequests = useMemo(() => {
+    if (monthFilter === "all") return requests;
+    return requests.filter((request) => requestMonth(request) === monthFilter);
+  }, [monthFilter, requests]);
   const monthEndOpsCards = useMemo(() => buildMonthEndOpsCards(closingIssues, rmaRecords), [closingIssues, rmaRecords]);
-  const collectionOpsCards = useMemo(() => buildCollectionOpsCards(collectionRecords), [collectionRecords]);
+  const collectionOpsCards = useMemo(() => buildCollectionOpsCards(filteredCollectionRecords), [filteredCollectionRecords]);
 
   const salesRows = useMemo<SalesOpsMetric[]>(() => {
     return TEST_USERS.filter((user) => user.role === "SALES").map((user) => {
@@ -1394,10 +1746,10 @@ export default function VipsOpsPage() {
       const userClosingIssues = useSnapshotClosing ? issuesForSales(closingIssues, user.salesName) : [];
       const monthEndCount = useSnapshotClosing ? userClosingIssues.length : legacy?.monthEndCount ?? 0;
       const monthEndAmount = useSnapshotClosing ? userClosingIssues.reduce((sum, issue) => sum + issue.amount, 0) : legacy?.monthEndAmount ?? 0;
-      const userCollectionRecords = collectionRecordsForSales(collectionRecords, user.salesName);
+      const userCollectionRecords = collectionRecordsForSales(filteredCollectionRecords, user.salesName);
       const collectionComposition = buildCollectionComposition(userCollectionRecords);
       const riskRecords = collectionRiskRecords(userCollectionRecords);
-      const userRequests = requestForSales(requests, user.name);
+      const userRequests = requestForSales(filteredRequests, user.name);
 
       return {
         name: user.name,
@@ -1413,15 +1765,15 @@ export default function VipsOpsPage() {
         rejectionRate: rejectionRate(userRequests)
       };
     });
-  }, [closingIssues, collectionRecords, requests, useSnapshotClosing]);
+  }, [closingIssues, filteredCollectionRecords, filteredRequests, useSnapshotClosing]);
 
   const teamRows = useMemo<TeamOpsMetric[]>(
     () =>
       teamRoster.map((team) => {
         const members = team.members;
         const memberRows = salesRows.filter((row) => members.includes(row.name));
-        const teamRequests = requestsForTeam(requests, members);
-        const teamCollectionRecords = collectionRecords.filter((record) => members.includes(normalizeSalesName(record.sales)) || members.includes(normalizeSalesName(record.fSales)));
+        const teamRequests = requestsForTeam(filteredRequests, members);
+        const teamCollectionRecords = filteredCollectionRecords.filter((record) => members.includes(normalizeSalesName(record.sales)) || members.includes(normalizeSalesName(record.fSales)));
         const teamCollectionComposition = buildCollectionComposition(teamCollectionRecords);
         const collectionRisk = collectionRiskRecords(teamCollectionRecords);
         const monthEndCount = memberRows.reduce((sum, row) => sum + row.monthEndCount, 0);
@@ -1440,13 +1792,13 @@ export default function VipsOpsPage() {
           rejectedCount: countByStatus(teamRequests).rejected
         };
       }),
-    [collectionRecords, requests, salesRows]
+    [filteredCollectionRecords, filteredRequests, salesRows]
   );
 
   const monthEndCount = salesRows.reduce((sum, row) => sum + row.monthEndCount, 0);
   const monthEndAmount = salesRows.reduce((sum, row) => sum + row.monthEndAmount, 0);
-  const allCollectionComposition = useMemo(() => buildCollectionComposition(collectionRecords), [collectionRecords]);
-  const allCollectionRisk = useMemo(() => collectionRiskRecords(collectionRecords), [collectionRecords]);
+  const allCollectionComposition = useMemo(() => buildCollectionComposition(filteredCollectionRecords), [filteredCollectionRecords]);
+  const allCollectionRisk = useMemo(() => collectionRiskRecords(filteredCollectionRecords), [filteredCollectionRecords]);
   const collectionCount = allCollectionRisk.length;
   const collectionAmount = allCollectionRisk.reduce((sum, record) => sum + record.diff, 0);
   const needCheckTeamNames = teamRows.filter((team) => team.monthEndRate < 50).map((team) => team.team);
@@ -1486,6 +1838,15 @@ export default function VipsOpsPage() {
     setMonthEndActionRequests(updateMonthEndActionRequestStatus(id, status));
   };
 
+  const handleIssueActionStatusChange = (issue: ClosingIssue, status: MonthEndActionStatus) => {
+    const request = saveMonthEndActionRequest({
+      issue,
+      memo: issue.memo || "Admin 조치 큐에서 접수",
+      requestedBy: "VIPS Admin"
+    });
+    setMonthEndActionRequests(updateMonthEndActionRequestStatus(request.id, status));
+  };
+
   const canAccess = selectedUser.accessRole === "admin";
   if (!canAccess) return <AccessDenied />;
 
@@ -1497,38 +1858,61 @@ export default function VipsOpsPage() {
     >
       <div className="mt-5 space-y-4">
         <section className="ops-card p-3">
-          <div className="flex flex-wrap gap-2">
-            {[
-              { key: "monthEnd" as const, label: "월마감" },
-              { key: "collection" as const, label: "수금" },
-              { key: "team" as const, label: "팀별 현황" },
-              { key: "sales" as const, label: "Sales별 현황" },
-              { key: "gatekeeper" as const, label: "월마감 요청 차단관리" }
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setActiveTab(tab.key)}
-                className={`h-10 rounded-full px-4 text-[13px] font-[950] transition ${
-                  activeTab === tab.key
-                    ? "bg-[#1D50A2] text-white shadow-[0_10px_24px_rgba(29,80,162,0.18)]"
-                    : "bg-[#f8fbff] text-[#64748b] hover:bg-[#edf4ff] hover:text-[#1D50A2]"
-                }`}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { key: "monthEnd" as const, label: "월마감" },
+                { key: "collection" as const, label: "수금" },
+                { key: "team" as const, label: "팀별 현황" },
+                { key: "sales" as const, label: "Sales별 현황" },
+                { key: "gatekeeper" as const, label: "월마감 요청 차단관리" }
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`h-10 rounded-full px-4 text-[13px] font-[950] transition ${
+                    activeTab === tab.key
+                      ? "bg-[#1D50A2] text-white shadow-[0_10px_24px_rgba(29,80,162,0.18)]"
+                      : "bg-[#f8fbff] text-[#64748b] hover:bg-[#edf4ff] hover:text-[#1D50A2]"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-2">
+              <span className="text-[12px] font-[950] text-[#64748b]">월별</span>
+              <select
+                value={monthFilter}
+                onChange={(event) => setMonthFilter(event.target.value)}
+                className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
               >
-                {tab.label}
-              </button>
-            ))}
+                <option value="all">전체 월</option>
+                {monthOptions.map((month) => (
+                  <option key={month} value={month}>{month}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </section>
 
         {activeTab === "monthEnd" ? (
-          <MonthEndOpsSummary cards={monthEndOpsCards} onSelect={setSelectedMonthEndCard} />
+          <div className="space-y-4">
+            <MonthEndOpsSummary cards={monthEndOpsCards} onSelect={setSelectedMonthEndCard} />
+            <MonthEndActionQueue
+              issues={closingIssues}
+              requests={monthEndActionRequests}
+              onIssueStatusChange={handleIssueActionStatusChange}
+              onStatusChange={handleActionStatusChange}
+            />
+          </div>
         ) : null}
 
         {activeTab === "collection" ? (
           <CollectionControlTower
-            records={collectionRecords}
-            arRecords={arRecords}
+            records={filteredCollectionRecords}
+            arRecords={filteredArRecords}
             cards={collectionOpsCards}
             sourceMessage={collectionSourceMessage}
             onSelect={setSelectedCollectionCard}

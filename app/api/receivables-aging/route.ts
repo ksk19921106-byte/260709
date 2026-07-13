@@ -10,6 +10,8 @@ type ReceivablesAgingRecord = {
   company: string;
   sales: string;
   team: string;
+  collectionMonth?: string;
+  dueDate?: string;
   poid: string;
   poitemId: string;
   itemName: string;
@@ -28,6 +30,7 @@ type ReceivablesAgingSnapshot = {
 };
 
 const snapshotPath = path.join(process.cwd(), "data", "receivables-aging.json");
+const historyPath = path.join(process.cwd(), "data", "receivables-aging-history.json");
 
 function isValidSnapshot(value: unknown): value is ReceivablesAgingSnapshot {
   if (!value || typeof value !== "object") return false;
@@ -48,6 +51,45 @@ async function readSnapshotFile() {
   }
 }
 
+function snapshotMonth(snapshot: ReceivablesAgingSnapshot) {
+  const explicit = snapshot.records.map((record) => record.collectionMonth || record.dueDate || "").find(Boolean);
+  const raw = String(explicit || snapshot.uploadedAt || "");
+  const match = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (!match) return "";
+  return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
+}
+
+function latestSnapshot(snapshots: ReceivablesAgingSnapshot[]) {
+  return [...snapshots].sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)))[0] ?? null;
+}
+
+async function readHistoryFile() {
+  const sharedHistory = await readSharedCollection<ReceivablesAgingSnapshot[]>("receivablesAgingHistory");
+  if (Array.isArray(sharedHistory)) return sharedHistory.filter(isValidSnapshot);
+
+  try {
+    const raw = await readFile(historyPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter(isValidSnapshot);
+  } catch {
+    // Fall back to the legacy latest snapshot below.
+  }
+
+  const latest = await readSnapshotFile();
+  return latest ? [latest] : [];
+}
+
+async function writeHistoryFile(history: ReceivablesAgingSnapshot[]) {
+  await writeSharedCollection("receivablesAgingHistory", history);
+
+  try {
+    await mkdir(path.dirname(historyPath), { recursive: true });
+    await writeFile(historyPath, JSON.stringify(history, null, 2), "utf8");
+  } catch {
+    // Vercel file system is not persistent. Shared storage is used when configured.
+  }
+}
+
 async function writeSnapshotFile(snapshot: ReceivablesAgingSnapshot) {
   await writeSharedCollection("receivablesAging", snapshot);
 
@@ -59,8 +101,11 @@ async function writeSnapshotFile(snapshot: ReceivablesAgingSnapshot) {
   }
 }
 
-export async function GET() {
-  return NextResponse.json({ snapshot: await readSnapshotFile() });
+export async function GET(request: NextRequest) {
+  const month = request.nextUrl.searchParams.get("month");
+  const history = await readHistoryFile();
+  const scopedHistory = month ? history.filter((snapshot) => snapshotMonth(snapshot) === month) : history;
+  return NextResponse.json({ snapshot: latestSnapshot(scopedHistory) ?? await readSnapshotFile(), history });
 }
 
 export async function POST(request: NextRequest) {
@@ -71,5 +116,7 @@ export async function POST(request: NextRequest) {
   }
 
   await writeSnapshotFile(snapshot);
+  const history = await readHistoryFile();
+  await writeHistoryFile([snapshot, ...history.filter((item) => item.id !== snapshot.id)]);
   return NextResponse.json({ ok: true, snapshot });
 }

@@ -27,9 +27,9 @@ const navItems: Array<{ id: string; label: string; href: string; icon: typeof Ho
   { id: "request-status", label: "나의 요청현황", href: "/request-status", icon: FileText, roles: ["SALES", "VIPS"] },
   { id: "month-end", label: "월마감 체크", href: "/month-end", icon: CalendarCheck, roles: ["SALES", "VIPS"], badge: 7 },
   { id: "collections", label: "수금관리", href: "/collections", icon: CircleDollarSign, roles: ["SALES", "VIPS"] },
-  { id: "vips-ops", label: "VIPS 운영", href: "/vips-ops", icon: BarChart3, roles: ["VIPS"], adminOnly: true },
   { id: "education", label: "교육센터", href: "/guide", icon: GraduationCap, roles: ["SALES", "VIPS"] },
-  { id: "performance", label: "성과 / 배지", href: "/performance", icon: BadgeCheck, roles: ["SALES", "VIPS"] }
+  { id: "performance", label: "성과 / 배지", href: "/performance", icon: BadgeCheck, roles: ["SALES", "VIPS"] },
+  { id: "vips-ops", label: "VIPS 운영", href: "/vips-ops", icon: BarChart3, roles: ["VIPS"], adminOnly: true }
 ];
 
 function Logo() {

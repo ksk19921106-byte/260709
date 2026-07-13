@@ -67,6 +67,8 @@ type DemoArRecord = {
   company: string;
   sales: string;
   team: string;
+  collectionMonth?: string;
+  dueDate?: string;
   poid: string;
   poitemId: string;
   itemName: string;
@@ -111,8 +113,18 @@ type LiveReceivableRecord = {
   basis?: string;
   matched_payer?: string;
   matchedPayer?: string;
+  collectionMonth?: string;
+  month?: string;
+  dueDate?: string;
+  expectedDate?: string;
+  date?: string;
   overdueDays?: number;
   agingBucket?: string;
+  erpUrl?: string;
+  trackingUrl?: string;
+  orderUrl?: string;
+  poUrl?: string;
+  link?: string;
 };
 
 const filterOptions: Array<{ key: TableFilter; label: string }> = [
@@ -159,6 +171,22 @@ function statusStyle(status: ReceivableRecord["status"]) {
 
 function parseAmount(value: string) {
   return Number(String(value ?? "").replace(/[^0-9.-]/g, "") || 0);
+}
+
+function normalizeCollectionMonth(value?: string | number | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-") return "";
+
+  const iso = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}`;
+
+  const short = raw.match(/(0?[1-9]|1[0-2])\s*월/);
+  if (short) {
+    const year = new Date().getFullYear();
+    return `${year}-${String(Number(short[1])).padStart(2, "0")}`;
+  }
+
+  return "";
 }
 
 function normalizeCollectionStatus(value: string): "완료" | "부분수금" | "미수" {
@@ -492,6 +520,8 @@ function parseReceivableStatusRows(rows: string[][]): ReceivableRecord[] {
   const overdueIdx = findColumn(headers, ["연체일", "경과일"], 4);
   const agingIdx = findColumn(headers, ["aging"], 5);
   const statusIdx = findColumn(headers, ["상태", "status"], 6);
+  const monthIdx = findColumn(headers, ["수금월", "예정월", "기준월", "월"], -1);
+  const dueDateIdx = findColumn(headers, ["수금예정일", "예정일", "due", "date"], -1);
 
   return rows
     .slice(1)
@@ -502,6 +532,8 @@ function parseReceivableStatusRows(rows: string[][]): ReceivableRecord[] {
       const expected = parseAmount(cells[expectedIdx]);
       const status = normalizeCollectionStatus(cells[statusIdx] ?? "");
       const overdueDays = parseAgingDays(cells[overdueIdx], "", status);
+      const dueDate = dueDateIdx >= 0 ? String(cells[dueDateIdx] ?? "").trim() : "";
+      const collectionMonth = normalizeCollectionMonth(monthIdx >= 0 ? cells[monthIdx] : dueDate);
       const paid = status === "완료" ? expected : 0;
       const diff = Math.max(0, expected - paid);
 
@@ -517,6 +549,8 @@ function parseReceivableStatusRows(rows: string[][]): ReceivableRecord[] {
         status,
         gubun: status === "부분수금" ? "부분수금" : status,
         basis: "전체 수금현황 업로드",
+        collectionMonth,
+        dueDate,
         overdueDays,
         agingBucket: normalizeAgingBucket(cells[agingIdx], overdueDays)
       };
@@ -554,8 +588,15 @@ function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: numb
     gubun: record.gubun,
     basis: record.basis ?? "수금현황 웹앱 연동",
     matched_payer: record.matched_payer ?? record.matchedPayer,
+    collectionMonth: normalizeCollectionMonth(record.collectionMonth ?? record.month ?? record.dueDate ?? record.expectedDate ?? record.date),
+    dueDate: String(record.dueDate ?? record.expectedDate ?? record.date ?? ""),
     overdueDays: Number(record.overdueDays ?? 0),
-    agingBucket: record.agingBucket ?? normalizeAgingBucket("", Number(record.overdueDays ?? 0))
+    agingBucket: record.agingBucket ?? normalizeAgingBucket("", Number(record.overdueDays ?? 0)),
+    erpUrl: record.erpUrl,
+    trackingUrl: record.trackingUrl,
+    orderUrl: record.orderUrl,
+    poUrl: record.poUrl,
+    link: record.link
   };
 }
 
@@ -574,6 +615,31 @@ function extractLiveReceivableRecords(payload: unknown): ReceivableRecord[] {
   return records
     .map((record, index) => normalizeLiveReceivableRecord(record, index))
     .filter((record): record is ReceivableRecord => Boolean(record && record.expected > 0));
+}
+
+function getReceivableErpUrl(record: ReceivableRecord) {
+  return record.erpUrl || record.trackingUrl || record.orderUrl || record.poUrl || record.link || "";
+}
+
+function ErpShortcutButton({ url }: { url?: string }) {
+  if (!url) {
+    return (
+      <span className="inline-flex h-8 items-center justify-center rounded-full bg-[#f8fafc] px-3 text-[11px] font-[900] text-[#94a3b8]">
+        준비중
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-8 items-center justify-center rounded-full bg-[#edf4ff] px-3 text-[11px] font-[950] text-[#1D50A2] transition hover:bg-[#dceaff]"
+    >
+      바로가기
+    </a>
+  );
 }
 
 function formatOverdueMonths(days: number) {
@@ -636,6 +702,7 @@ export default function CollectionsPage() {
   const topSectionRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TableFilter>("all");
+  const [monthFilter, setMonthFilter] = useState("all");
   const [teamFilter, setTeamFilter] = useState("all");
   const [salesFilter, setSalesFilter] = useState("all");
   const [actionStatuses, setActionStatuses] = useState<Record<string, CollectionActionStatus>>({});
@@ -675,6 +742,15 @@ export default function CollectionsPage() {
     }
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [isAdmin, recordsWithAssignments, visibleRecords]);
+  const monthFilterOptions = useMemo(() => {
+    const source = isAdmin ? recordsWithAssignments : visibleRecords;
+    const months = new Set<string>();
+    for (const record of source) {
+      const month = normalizeCollectionMonth(record.collectionMonth ?? record.dueDate);
+      if (month) months.add(month);
+    }
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [isAdmin, recordsWithAssignments, visibleRecords]);
   const paymentSalesOptions = useMemo(() => {
     const names = new Set<string>(salesFilterOptions);
     for (const order of matchingDemo.orders) {
@@ -691,11 +767,13 @@ export default function CollectionsPage() {
   const scopedRecords = useMemo(
     () =>
       visibleRecords.filter((record) => {
+        const recordMonth = normalizeCollectionMonth(record.collectionMonth ?? record.dueDate);
+        const matchMonth = monthFilter === "all" || recordMonth === monthFilter;
         const matchTeam = teamFilter === "all" || normalizeTeamName(record.team) === teamFilter;
         const matchSales = salesFilter === "all" || normalizeSalesName(record.sales) === salesFilter;
-        return matchTeam && matchSales;
+        return matchMonth && matchTeam && matchSales;
       }),
-    [salesFilter, teamFilter, visibleRecords]
+    [monthFilter, salesFilter, teamFilter, visibleRecords]
   );
   const summary = useMemo(() => buildCollectionSummary(scopedRecords), [scopedRecords]);
   const composition = useMemo(() => buildCollectionComposition(scopedRecords), [scopedRecords]);
@@ -728,12 +806,15 @@ export default function CollectionsPage() {
   );
   const scopedArRecords = useMemo(() => {
     return arRecords.filter((record) => {
+      const recordSales = normalizeSalesName(record.sales);
+      const recordMonth = normalizeCollectionMonth(record.collectionMonth ?? record.dueDate);
+      const matchMonth = monthFilter === "all" || !recordMonth || recordMonth === monthFilter;
       const matchTeam = teamFilter === "all" || record.team === teamFilter;
-      const matchSales = salesFilter === "all" || record.sales === salesFilter;
-      const matchUser = isAdmin || record.sales === normalizeSalesName(selectedUser.salesName);
-      return matchTeam && matchSales && matchUser;
+      const matchSales = salesFilter === "all" || recordSales === salesFilter;
+      const matchUser = isAdmin || recordSales === normalizeSalesName(selectedUser.salesName);
+      return matchMonth && matchTeam && matchSales && matchUser;
     });
-  }, [arRecords, isAdmin, salesFilter, selectedUser.salesName, teamFilter]);
+  }, [arRecords, isAdmin, monthFilter, salesFilter, selectedUser.salesName, teamFilter]);
   const arSummary = useMemo(() => {
     const totalAr = scopedArRecords.reduce((sum, record) => sum + record.ar, 0);
     const over30 = scopedArRecords.filter((record) => record.overdueDays >= 30);
@@ -815,8 +896,10 @@ export default function CollectionsPage() {
     const params = new URLSearchParams(window.location.search);
     const team = params.get("team");
     const sales = params.get("sales");
+    const month = params.get("month");
     if (team && (collectionTeamOptions.includes(team) || team === "all")) setTeamFilter(team);
     if (sales) setSalesFilter(sales);
+    if (month) setMonthFilter(month);
 
     try {
       const raw = window.localStorage.getItem(ACTION_STATUS_KEY);
@@ -860,9 +943,22 @@ export default function CollectionsPage() {
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
         const records = extractLiveReceivableRecords(payload);
-        if (records.length === 0) return;
+        if (records.length === 0) {
+          if (isAdmin && payload?.configured) {
+            setStatusFileMessage(
+              payload?.message
+                ? `수금현황 웹앱 연결 확인 필요: ${payload.message}`
+                : "수금현황 웹앱은 연결됐지만 인식 가능한 수금 데이터가 없습니다."
+            );
+          }
+          return;
+        }
         setUploadedReceivableRecords(records);
-        setStatusFileMessage(`수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다.`);
+        setStatusFileMessage(
+          payload?.updatedAt
+            ? `수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다. 기준 ${payload.updatedAt}`
+            : `수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다.`
+        );
         try {
           window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(records));
         } catch {
@@ -870,7 +966,7 @@ export default function CollectionsPage() {
         }
       })
       .catch(() => {
-        // Existing shared/local data remains available when the live web app is not configured.
+        if (isAdmin) setStatusFileMessage("수금현황 웹앱 연결에 실패했습니다. URL 또는 배포 권한을 확인해주세요.");
       });
 
     try {
@@ -891,6 +987,33 @@ export default function CollectionsPage() {
           window.localStorage.setItem(AR_DEMO_KEY, JSON.stringify(records));
         } catch {
           // Shared data still renders even when browser storage is unavailable.
+        }
+      })
+      .catch(() => {
+        // Local sample/localStorage data is still available when shared storage is not configured.
+      });
+
+    void fetch("/api/receivables-matching")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const demo = payload?.snapshot?.demo;
+        const assignments = payload?.snapshot?.assignments;
+        if (demo && Array.isArray(demo.orders) && Array.isArray(demo.payments) && Array.isArray(demo.matches)) {
+          setMatchingDemo(demo as MatchingDemoState);
+          setPaymentFileMessage(`공용 저장소에서 미매칭 수금 ${demo.payments.length}건을 불러왔습니다.`);
+          try {
+            window.localStorage.setItem(MATCHING_DEMO_KEY, JSON.stringify(demo));
+          } catch {
+            // Shared data still renders even when browser storage is unavailable.
+          }
+        }
+        if (assignments && typeof assignments === "object") {
+          setAssignedPaymentSales(assignments as Record<string, string>);
+          try {
+            window.localStorage.setItem(PAYMENT_ASSIGNMENT_KEY, JSON.stringify(assignments));
+          } catch {
+            // Shared assignments still render even when browser storage is unavailable.
+          }
         }
       })
       .catch(() => {
@@ -1016,6 +1139,29 @@ export default function CollectionsPage() {
     setAssignedSales((current) => ({ ...current, [record.id]: nextSales.trim() }));
   };
 
+  const persistMatchingSnapshot = async (demo: MatchingDemoState, assignments: Record<string, string>) => {
+    const uploadedAt = new Date().toISOString();
+    const snapshot = {
+      id: `receivables-matching-${uploadedAt}`,
+      uploadedAt,
+      uploadedBy: selectedUser.name,
+      demo,
+      assignments
+    };
+
+    try {
+      const response = await fetch("/api/receivables-matching", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot)
+      });
+      if (!response.ok) throw new Error("shared save failed");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const assignPaymentSales = (paymentId: string, salesName: string) => {
     const next = { ...assignedPaymentSales, [paymentId]: salesName };
     if (!salesName) delete next[paymentId];
@@ -1025,15 +1171,18 @@ export default function CollectionsPage() {
     } catch {
       // Assignment remains visible in the current session.
     }
+    void persistMatchingSnapshot(matchingDemo, next);
   };
 
-  const saveMatchingDemo = (next: MatchingDemoState) => {
+  const saveMatchingDemo = async (next: MatchingDemoState, persist = false) => {
     setMatchingDemo(next);
     try {
       window.localStorage.setItem(MATCHING_DEMO_KEY, JSON.stringify(next));
     } catch {
       // Demo remains available in the current session.
     }
+    if (!persist) return false;
+    return persistMatchingSnapshot(next, assignedPaymentSales);
   };
 
   const recognizeMatchingData = () => {
@@ -1061,13 +1210,14 @@ export default function CollectionsPage() {
       } else {
         const parsed = parsePaymentRows(rows);
         setPaymentPaste(text);
-        saveMatchingDemo({
+        const nextDemo = {
           ...matchingDemo,
           payments: parsed,
           matches: matchingDemo.matches.filter((match) => parsed.some((payment) => payment.id === match.paymentId))
-        });
+        };
+        const saved = await saveMatchingDemo(nextDemo, true);
         const leftCount = parsed.filter((payment) => payment.status === "unmatched").length;
-        setPaymentFileMessage(`${file.name} · 수금 ${parsed.length}건 · 남은금액/미매칭 ${leftCount}건 반영`);
+        setPaymentFileMessage(`${file.name} · 수금 ${parsed.length}건 · 남은금액/미매칭 ${leftCount}건 반영 · ${saved ? "구글 시트 저장 완료" : "브라우저 저장만 완료"}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "파일을 읽지 못했습니다.";
@@ -1218,8 +1368,8 @@ export default function CollectionsPage() {
     >
       <div className="space-y-5">
         <section className="ops-card bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_58%,#fff7f3_100%)] p-5">
-          <div className="grid gap-5 lg:grid-cols-1">
-            <div>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
               <div className="flex items-center gap-2 text-[#1D50A2]">
                 <ShieldCheck size={18} />
                 <p className="text-[11px] font-[950] uppercase tracking-[0.08em]">MY COLLECTION VIEW</p>
@@ -1233,6 +1383,10 @@ export default function CollectionsPage() {
                 {isAdmin ? "Sales 전체의 미수, 부분수금, 입금자명 매칭 이슈를 동일한 화면 구조로 확인합니다." : "미수, 부분수금, 입금자명 매칭 이슈를 우선순위대로 정리했습니다."}
               </p>
             </div>
+            <div className="shrink-0 rounded-[24px] border border-[#dbe7ff] bg-white/90 px-8 py-5 text-right shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
+              <p className="text-[12px] font-[900] text-[#64748b]">전체 수금률</p>
+              <p className="mt-1 text-[42px] font-[950] leading-none tracking-[-0.05em] text-[#1D50A2]">{composition.collectionRate}%</p>
+            </div>
           </div>
         </section>
 
@@ -1244,13 +1398,27 @@ export default function CollectionsPage() {
                 {isAdmin ? "전체 직원" : `${selectedUser.name}님`}의 수금 대상 {composition.totalRecords}건 중 완료 {composition.completedRecords.length}건, 부분수금 {composition.partialRecords.length}건, 미수 {composition.unpaidRecords.length}건입니다.
               </p>
             </div>
-            <div className="rounded-full bg-[#f8fbff] px-3 py-1.5 text-[12px] font-[900] text-[#1D50A2]">전체 수금률 {composition.collectionRate}%</div>
           </div>
           {isAdmin && statusFileMessage ? (
             <p className="mt-3 rounded-[16px] bg-[#fbfdff] px-4 py-3 text-[12px] font-[800] text-[#64748b]">{statusFileMessage}</p>
           ) : null}
-          {isAdmin ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
+            <span className="text-[12px] font-[950] text-[#64748b]">월별</span>
+            <select
+              value={monthFilter}
+              onChange={(event) => {
+                setMonthFilter(event.target.value);
+                setShowAllRows(false);
+              }}
+              className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+            >
+              <option value="all">전체 월</option>
+              {monthFilterOptions.map((month) => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+            {isAdmin ? (
+              <>
               <span className="text-[12px] font-[950] text-[#64748b]">팀별</span>
               <select
                 value={teamFilter}
@@ -1279,11 +1447,12 @@ export default function CollectionsPage() {
                   <option key={name} value={name}>{name}</option>
                 ))}
               </select>
-              <span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-[900] text-[#64748b]">
-                필터 결과 {scopedRecords.length}건
-              </span>
-            </div>
-          ) : null}
+              </>
+            ) : null}
+            <span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-[900] text-[#64748b]">
+              필터 결과 {scopedRecords.length}건
+            </span>
+          </div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             {summaryFilterOptions.map((option) => (
               <button
@@ -1302,8 +1471,9 @@ export default function CollectionsPage() {
             장기미수는 Admin이 업로드한 수금/AR 파일의 수금예정일 기준 경과일이 30일 이상인 건만 집계합니다.
           </p>
           <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e7ecf4]">
-            <div className="grid grid-cols-[minmax(220px,1fr)_120px_120px_100px_96px_110px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+            <div className="grid grid-cols-[minmax(220px,1fr)_96px_120px_120px_100px_96px_110px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
               <span>거래처</span>
+              <span>바로가기</span>
               <span>담당 Sales</span>
               <span>수금예정액</span>
               <span>미수금액</span>
@@ -1315,11 +1485,12 @@ export default function CollectionsPage() {
                 <p className="p-6 text-center text-[13px] font-[850] text-[#64748b]">선택한 기준에 맞는 수금 데이터가 없습니다.</p>
               ) : (
                 selectedSummaryRows.map((record) => (
-                  <div key={`${record.id}-${record.name}`} className="grid grid-cols-[minmax(220px,1fr)_120px_120px_100px_96px_110px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
+                  <div key={`${record.id}-${record.name}`} className="grid grid-cols-[minmax(220px,1fr)_96px_120px_120px_100px_96px_110px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
                     <span className="min-w-0">
                       <b className="block truncate font-[950] text-[#111827]">{record.name}</b>
                       <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#64748b]">{record.basis || "전체 수금현황"} · {normalizeTeamName(record.team)}</span>
                     </span>
+                    <ErpShortcutButton url={getReceivableErpUrl(record)} />
                     <span className="truncate font-[850] text-[#475569]">{normalizeSalesName(record.sales) || "미매칭"}</span>
                     <span className="truncate font-[900] text-[#111827]">{formatKrwShort(record.expected)}</span>
                     <span className="truncate font-[950] text-[#b85f18]">{formatKrwShort(record.diff)}</span>
@@ -1345,10 +1516,21 @@ export default function CollectionsPage() {
                   : "Admin이 업로드한 AR Aging 데이터 중 내 담당 거래처만 보여줍니다."}
               </p>
             </div>
-            {(
+            {isAdmin ? (
+              <div className="min-w-[320px] rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
+                <input
+                  type="file"
+                  accept=".xls,.xlsx,.csv,.tsv,.txt"
+                  onChange={(event) => importArFile(event.target.files?.[0])}
+                  className="block w-full text-[12px] font-[800] text-[#475569] file:mr-3 file:rounded-full file:border-0 file:bg-[#edf4ff] file:px-3 file:py-2 file:text-[12px] file:font-[950] file:text-[#1D50A2]"
+                  disabled={isReadingFile}
+                />
+                <p className="mt-2 text-[11px] font-[750] text-[#64748b]">COMPANY, SALES, POID, POITEMID, 경과일, AR 컬럼을 인식합니다.</p>
+                {arFileMessage ? <p className="mt-1 text-[11px] font-[900] text-[#1D50A2]">{arFileMessage}</p> : null}
+              </div>
+            ) : (
               <div className="rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-4 py-3 text-[12px] font-[850] text-[#64748b]">
                 현재 사용자 <b className="text-[#1D50A2]">{selectedUser.name}</b> 기준 {arSummary.totalCount}건 표시
-                {isAdmin ? <span className="ml-1 text-[#94a3b8]">· 전체 직원 범위</span> : null}
               </div>
             )}
           </div>
@@ -1697,8 +1879,9 @@ export default function CollectionsPage() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e7ecf4]">
-              <div className="grid grid-cols-[minmax(180px,1fr)_108px_108px_108px_84px_76px_88px_112px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+              <div className="grid grid-cols-[minmax(180px,1fr)_92px_108px_108px_108px_84px_76px_88px_112px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
                 <span>거래처</span>
+                <span>바로가기</span>
                 <span>예정금액</span>
                 <span>입금금액</span>
                 <span>차액</span>
@@ -1714,11 +1897,12 @@ export default function CollectionsPage() {
                   displayedRecordRows.map((record) => {
                     const issue = buildCollectionIssues([record])[0];
                     return (
-                      <div key={record.id} className="grid grid-cols-[minmax(180px,1fr)_108px_108px_108px_84px_76px_88px_112px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
+                      <div key={record.id} className="grid grid-cols-[minmax(180px,1fr)_92px_108px_108px_108px_84px_76px_88px_112px] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
                         <div className="min-w-0">
                           <p className="truncate font-[950] text-[#111827]">{record.name}</p>
                           <p className="truncate text-[11px] font-[800] text-[#64748b]">{normalizeSalesName(record.sales) || "담당자 미매칭"} · {normalizeTeamName(record.team)}</p>
                         </div>
+                        <ErpShortcutButton url={getReceivableErpUrl(record)} />
                         <span className="truncate font-[900] text-[#111827]">{formatKrwShort(record.expected)}</span>
                         <span className="truncate font-[850] text-[#475569]">{formatKrwShort(record.paid)}</span>
                         <span className="truncate font-[900] text-[#b85f18]">{formatKrwShort(record.diff)}</span>
@@ -1869,12 +2053,32 @@ export default function CollectionsPage() {
               </div>
               <span className="rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#b85f18]">{visibleUnmatchedPayments.length}건</span>
             </div>
+            {isAdmin ? (
+              <div className="mt-4 rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[12px] font-[950] text-[#111827]">담당자 미매칭건 파일 업로드</p>
+                    <p className="mt-1 text-[11px] font-[750] text-[#64748b]">수금 RAW 파일을 올리면 구글 시트에 저장되고, 담당자 지정 후 각 Sales 화면에 표시됩니다.</p>
+                  </div>
+                  <input
+                    type="file"
+                    accept=".xls,.xlsx,.csv,.tsv,.txt"
+                    onChange={(event) => importMatchingFile(event.target.files?.[0], "payments")}
+                    className="block max-w-[360px] text-[12px] font-[800] text-[#475569] file:mr-3 file:rounded-full file:border-0 file:bg-[#edf4ff] file:px-3 file:py-2 file:text-[12px] file:font-[950] file:text-[#1D50A2]"
+                    disabled={isReadingFile}
+                  />
+                </div>
+                {paymentFileMessage ? <p className="mt-2 text-[11px] font-[900] text-[#1D50A2]">{paymentFileMessage}</p> : null}
+              </div>
+            ) : null}
             <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e7ecf4]">
-              <div className="grid grid-cols-[minmax(240px,1.2fr)_130px_110px_minmax(180px,1fr)] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+              <div className={`${isAdmin ? "grid-cols-[minmax(220px,1.2fr)_120px_100px_minmax(160px,1fr)_160px_112px]" : "grid-cols-[minmax(240px,1.2fr)_130px_110px_minmax(180px,1fr)]"} grid gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]`}>
                 <span>수금건</span>
                 <span>남은금액</span>
                 <span>입금일</span>
                 <span>확인 내용</span>
+                {isAdmin ? <span>담당자 지정</span> : null}
+                {isAdmin ? <span>관리</span> : null}
               </div>
               <div className="max-h-[320px] overflow-auto">
                 {visibleUnmatchedPayments.length === 0 ? (
@@ -1882,8 +2086,10 @@ export default function CollectionsPage() {
                 ) : (
                   visibleUnmatchedPayments.map((payment) => {
                     const reason = paymentUnmatchedReason(payment, matchingDemo.orders);
+                    const recommendedSales = inferPaymentSales(payment, matchingDemo.orders, scopedArRecords);
+                    const assigned = assignedPaymentSales[payment.id] ?? "";
                     return (
-                      <div key={payment.id} className="grid grid-cols-[minmax(240px,1.2fr)_130px_110px_minmax(180px,1fr)] items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]">
+                      <div key={payment.id} className={`${isAdmin ? "grid-cols-[minmax(220px,1.2fr)_120px_100px_minmax(160px,1fr)_160px_112px]" : "grid-cols-[minmax(240px,1.2fr)_130px_110px_minmax(180px,1fr)]"} grid items-center gap-2 border-t border-[#eef2f7] bg-white px-4 py-3 text-[12px]`}>
                         <span className="min-w-0">
                           <b className="block truncate font-[950] text-[#111827]">{payment.payerName}</b>
                           <span className="mt-0.5 block truncate text-[11px] font-[750] text-[#64748b]">
@@ -1893,6 +2099,37 @@ export default function CollectionsPage() {
                         <span className="truncate font-[900] text-[#b85f18]">{formatKrwShort(payment.amount)}</span>
                         <span className="truncate font-[850] text-[#475569]">{payment.date}</span>
                         <span className="truncate font-[850] text-[#64748b]" title={reason}>{reason}</span>
+                        {isAdmin ? (
+                          <select
+                            value={assigned}
+                            onChange={(event) => assignPaymentSales(payment.id, event.target.value)}
+                            className="h-9 min-w-0 rounded-xl border border-[#dce6f3] bg-[#fbfdff] px-3 text-[12px] font-[850] text-[#10203f] outline-none focus:border-[#1D50A2]"
+                          >
+                            <option value="">{recommendedSales ? `추천: ${recommendedSales}` : "담당자 선택"}</option>
+                            {paymentSalesOptions.map((salesName) => (
+                              <option key={`${payment.id}-${salesName}`} value={salesName}>
+                                {salesName}
+                              </option>
+                            ))}
+                          </select>
+                        ) : null}
+                        {isAdmin ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = assigned || recommendedSales;
+                              if (!target) {
+                                window.alert("담당자를 먼저 선택해주세요.");
+                                return;
+                              }
+                              assignPaymentSales(payment.id, target);
+                              window.alert(`${payment.payerName} 수금건을 ${target} 담당 검토로 지정했습니다.`);
+                            }}
+                            className="h-9 rounded-xl bg-[#1D50A2] px-3 text-[11px] font-[950] text-white"
+                          >
+                            검토 지정
+                          </button>
+                        ) : null}
                       </div>
                     );
                   })

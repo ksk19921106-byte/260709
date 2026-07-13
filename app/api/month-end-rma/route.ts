@@ -8,6 +8,7 @@ import { readSharedCollection, writeSharedCollection } from "../../services/shar
 export const runtime = "nodejs";
 
 const snapshotPath = path.join(process.cwd(), "data", "month-end-rma.json");
+const historyPath = path.join(process.cwd(), "data", "month-end-rma-history.json");
 
 function asText(value: unknown) {
   return String(value ?? "").trim();
@@ -24,8 +25,48 @@ async function readSnapshotFile() {
   }
 }
 
+function snapshotMonth(snapshot: MonthEndRmaSnapshot) {
+  const raw = String(snapshot.uploadedAt || "");
+  const match = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (!match) return "";
+  return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
+}
+
+function latestSnapshot(snapshots: MonthEndRmaSnapshot[]) {
+  return [...snapshots].sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)))[0] ?? null;
+}
+
+async function readHistoryFile() {
+  const sharedHistory = await readSharedCollection<MonthEndRmaSnapshot[]>("monthEndRmaHistory");
+  if (Array.isArray(sharedHistory)) return sharedHistory.filter((snapshot) => snapshot?.id && Array.isArray(snapshot.records));
+
+  try {
+    const raw = await readFile(historyPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((snapshot) => snapshot?.id && Array.isArray(snapshot.records));
+  } catch {
+    // Fall back to the legacy latest snapshot below.
+  }
+
+  const latest = await readSnapshotFile();
+  return latest ? [latest] : [];
+}
+
+async function writeHistoryFile(history: MonthEndRmaSnapshot[]) {
+  await writeSharedCollection("monthEndRmaHistory", history);
+
+  try {
+    await mkdir(path.dirname(historyPath), { recursive: true });
+    await writeFile(historyPath, JSON.stringify(history, null, 2), "utf8");
+  } catch {
+    // Vercel file system is not persistent. Shared storage is used when configured.
+  }
+}
+
 async function writeSnapshotFile(snapshot: MonthEndRmaSnapshot) {
   await writeSharedCollection("monthEndRma", snapshot);
+  const history = await readHistoryFile();
+  await writeHistoryFile([snapshot, ...history.filter((item) => item.id !== snapshot.id)]);
 
   try {
     await mkdir(path.dirname(snapshotPath), { recursive: true });
@@ -175,8 +216,12 @@ function normalizeRecord(row: Record<string, string>, index: number, uploadedAt:
   };
 }
 
-export async function GET() {
-  return NextResponse.json({ snapshot: await readSnapshotFile() });
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const month = url.searchParams.get("month");
+  const history = await readHistoryFile();
+  const scopedHistory = month ? history.filter((snapshot) => snapshotMonth(snapshot) === month) : history;
+  return NextResponse.json({ snapshot: latestSnapshot(scopedHistory) ?? await readSnapshotFile(), history });
 }
 
 export async function POST(request: Request) {

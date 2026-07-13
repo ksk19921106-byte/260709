@@ -120,6 +120,31 @@ function getElapsedDays(issue: ClosingIssue) {
   return Math.max(issue.shipmentDays ?? 0, issue.taxIssueDays ?? 0);
 }
 
+function getMonthEndErpUrl(issue: ClosingIssue) {
+  return issue.erpUrl || issue.trackingUrl || issue.orderUrl || "";
+}
+
+function ErpShortcutButton({ url }: { url?: string }) {
+  if (!url) {
+    return (
+      <span className="inline-flex h-8 items-center justify-center rounded-full bg-[#f8fafc] px-3 text-[11px] font-[900] text-[#94a3b8]">
+        준비중
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-8 items-center justify-center rounded-full bg-[#edf4ff] px-3 text-[11px] font-[950] text-[#1D50A2] transition hover:bg-[#dceaff]"
+    >
+      바로가기
+    </a>
+  );
+}
+
 function isVisibleMonthEndIssue(issue: ClosingIssue) {
   return issue.issueType === "invoice_required" || issue.issueType === "shipment_check" || issue.issueType === "long_pending";
 }
@@ -664,7 +689,7 @@ export function MonthEndPasteClient() {
             </div>
           ) : (
           <div className="mt-4 overflow-x-auto rounded-[18px] border border-[#e7ecf4]">
-            <div className="grid min-w-[1180px] grid-cols-[110px_170px_minmax(210px,1fr)_120px_120px_80px_100px_minmax(230px,1.1fr)_150px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
+            <div className="grid min-w-[1280px] grid-cols-[110px_170px_minmax(210px,1fr)_120px_120px_80px_100px_minmax(230px,1.1fr)_150px_96px] gap-2 bg-[#f8fbff] px-4 py-3 text-[11px] font-[950] text-[#64748b]">
               <span>ISales</span>
               <span>상태</span>
               <span>거래처(Company)</span>
@@ -674,6 +699,7 @@ export function MonthEndPasteClient() {
               <span>미출고기간</span>
               <span>사유입력칸</span>
               <span>액션</span>
+              <span>바로가기</span>
             </div>
             <div className="max-h-[520px] overflow-auto">
               {filteredIssues.length === 0 ? (
@@ -682,7 +708,7 @@ export function MonthEndPasteClient() {
                 filteredIssues.map((issue) => (
                   <div
                     key={issue.id}
-                    className={`grid min-w-[1180px] grid-cols-[110px_170px_minmax(210px,1fr)_120px_120px_80px_100px_minmax(230px,1.1fr)_150px] items-center gap-2 border-t border-[#eef2f7] px-4 py-3 text-[12px] ${
+                    className={`grid min-w-[1280px] grid-cols-[110px_170px_minmax(210px,1fr)_120px_120px_80px_100px_minmax(230px,1.1fr)_150px_96px] items-center gap-2 border-t border-[#eef2f7] px-4 py-3 text-[12px] ${
                       issue.status !== "open" ? "bg-[#f8fafc] opacity-60" : "bg-white"
                     }`}
                   >
@@ -715,6 +741,7 @@ export function MonthEndPasteClient() {
                         <CheckCircle2 size={15} />
                       </button>
                     </span>
+                    <ErpShortcutButton url={getMonthEndErpUrl(issue)} />
                   </div>
                 ))
               )}
