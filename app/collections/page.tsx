@@ -78,6 +78,11 @@ type DemoArRecord = {
   status: string;
 };
 
+type LiveReceivablesMeta = {
+  collectionRate: number | null;
+  updatedAt?: string | null;
+};
+
 type DemoCollectionMatch = {
   id: string;
   paymentId: string;
@@ -617,6 +622,39 @@ function extractLiveReceivableRecords(payload: unknown): ReceivableRecord[] {
     .filter((record): record is ReceivableRecord => Boolean(record && record.expected > 0));
 }
 
+function extractLiveReceivablesMeta(payload: unknown): LiveReceivablesMeta {
+  const root = payload as { payload?: unknown; updatedAt?: string | null };
+  const body = (root?.payload ?? root) as {
+    updatedAt?: string | null;
+    summary?: Record<string, unknown>;
+    rawOverview?: { kpi?: Record<string, unknown>; rateTrend?: Record<string, unknown> };
+    data?: { summary?: Record<string, unknown>; rawOverview?: { kpi?: Record<string, unknown>; rateTrend?: Record<string, unknown> } };
+  };
+  const summary = body.summary ?? body.data?.summary ?? {};
+  const kpi = body.rawOverview?.kpi ?? body.data?.rawOverview?.kpi ?? {};
+  const trend = body.rawOverview?.rateTrend ?? body.data?.rawOverview?.rateTrend ?? {};
+  const candidates = [
+    summary.collectionRate,
+    summary.currentCollectionRate,
+    summary.rate,
+    kpi.rate,
+    kpi.currentRate,
+    trend.current
+  ];
+  const collectionRate = candidates.map(toPercentNumber).find((value): value is number => value !== null) ?? null;
+  return {
+    collectionRate,
+    updatedAt: body.updatedAt ?? root.updatedAt ?? null
+  };
+}
+
+function toPercentNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed <= 1 ? Math.round(parsed * 1000) / 10 : Math.round(parsed * 10) / 10;
+}
+
 function getReceivableErpUrl(record: ReceivableRecord) {
   return record.erpUrl || record.trackingUrl || record.orderUrl || record.poUrl || record.link || "";
 }
@@ -725,6 +763,7 @@ export default function CollectionsPage() {
   const [assignedPaymentSales, setAssignedPaymentSales] = useState<Record<string, string>>({});
   const [arRecords, setArRecords] = useState<DemoArRecord[]>([]);
   const [uploadedReceivableRecords, setUploadedReceivableRecords] = useState<ReceivableRecord[]>([]);
+  const [liveReceivablesMeta, setLiveReceivablesMeta] = useState<LiveReceivablesMeta>({ collectionRate: null });
 
   const isAdmin = selectedUser.accessRole === "admin" || selectedUser.team === "VIPS팀";
   const sourceReceivableRecords = uploadedReceivableRecords.length > 0 ? uploadedReceivableRecords : receivableRecords;
@@ -777,6 +816,11 @@ export default function CollectionsPage() {
   );
   const summary = useMemo(() => buildCollectionSummary(scopedRecords), [scopedRecords]);
   const composition = useMemo(() => buildCollectionComposition(scopedRecords), [scopedRecords]);
+  const canUseLiveOverallRate = isAdmin && monthFilter === "all" && teamFilter === "all" && salesFilter === "all";
+  const displayCollectionRate =
+    canUseLiveOverallRate && liveReceivablesMeta.collectionRate !== null
+      ? liveReceivablesMeta.collectionRate
+      : composition.collectionRate;
   const unmappedRecords = useMemo(() => recordsWithAssignments.filter((record) => !normalizeSalesName(record.sales)), [recordsWithAssignments]);
   const mappedRecordsCount = useMemo(() => recordsWithAssignments.filter((record) => Boolean(normalizeSalesName(record.sales))).length, [recordsWithAssignments]);
   const allIssues = useMemo(() => buildCollectionIssues(scopedRecords), [scopedRecords]);
@@ -942,6 +986,8 @@ export default function CollectionsPage() {
     void fetch("/api/receivables-live")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
+        const meta = extractLiveReceivablesMeta(payload);
+        setLiveReceivablesMeta(meta);
         const records = extractLiveReceivableRecords(payload);
         if (records.length === 0) {
           if (isAdmin && payload?.configured) {
@@ -955,8 +1001,8 @@ export default function CollectionsPage() {
         }
         setUploadedReceivableRecords(records);
         setStatusFileMessage(
-          payload?.updatedAt
-            ? `수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다. 기준 ${payload.updatedAt}`
+          meta.updatedAt
+            ? `수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다. 기준 ${meta.updatedAt}`
             : `수금현황 웹앱에서 전체 수금현황 ${records.length}건을 불러왔습니다.`
         );
         try {
@@ -1385,7 +1431,7 @@ export default function CollectionsPage() {
             </div>
             <div className="shrink-0 rounded-[24px] border border-[#dbe7ff] bg-white/90 px-8 py-5 text-right shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
               <p className="text-[12px] font-[900] text-[#64748b]">전체 수금률</p>
-              <p className="mt-1 text-[42px] font-[950] leading-none tracking-[-0.05em] text-[#1D50A2]">{composition.collectionRate}%</p>
+              <p className="mt-1 text-[42px] font-[950] leading-none tracking-[-0.05em] text-[#1D50A2]">{displayCollectionRate}%</p>
             </div>
           </div>
         </section>

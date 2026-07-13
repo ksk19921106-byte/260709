@@ -77,6 +77,10 @@ type ReceivablesAgingSnapshot = {
   records: DemoArRecord[];
 };
 
+type LiveReceivablesMeta = {
+  collectionRate: number | null;
+};
+
 type GatekeeperRow = {
   name: string;
   team: string;
@@ -289,6 +293,36 @@ function extractLiveReceivableRecords(payload: unknown): ReceivableRecord[] {
   return records
     .map((record, index) => normalizeLiveReceivableRecord(record, index))
     .filter((record): record is ReceivableRecord => Boolean(record && record.expected > 0));
+}
+
+function extractLiveReceivablesMeta(payload: unknown): LiveReceivablesMeta {
+  const root = payload as { payload?: unknown };
+  const body = (root?.payload ?? root) as {
+    summary?: Record<string, unknown>;
+    rawOverview?: { kpi?: Record<string, unknown>; rateTrend?: Record<string, unknown> };
+    data?: { summary?: Record<string, unknown>; rawOverview?: { kpi?: Record<string, unknown>; rateTrend?: Record<string, unknown> } };
+  };
+  const summary = body.summary ?? body.data?.summary ?? {};
+  const kpi = body.rawOverview?.kpi ?? body.data?.rawOverview?.kpi ?? {};
+  const trend = body.rawOverview?.rateTrend ?? body.data?.rawOverview?.rateTrend ?? {};
+  const candidates = [
+    summary.collectionRate,
+    summary.currentCollectionRate,
+    summary.rate,
+    kpi.rate,
+    kpi.currentRate,
+    trend.current
+  ];
+  return {
+    collectionRate: candidates.map(toPercentNumber).find((value): value is number => value !== null) ?? null
+  };
+}
+
+function toPercentNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed <= 1 ? Math.round(parsed * 1000) / 10 : Math.round(parsed * 10) / 10;
 }
 
 function formatOverdueMonths(days: number) {
@@ -817,15 +851,18 @@ function CollectionControlTower({
   arRecords,
   cards,
   sourceMessage,
+  liveCollectionRate,
   onSelect
 }: {
   records: ReceivableRecord[];
   arRecords: DemoArRecord[];
   cards: CollectionOpsCard[];
   sourceMessage: string;
+  liveCollectionRate?: number | null;
   onSelect: (card: CollectionOpsCard) => void;
 }) {
   const summary = buildCollectionSummary(records);
+  const displayCollectionRate = liveCollectionRate ?? summary.collectionRate;
   const teamStats = buildTeamStats(records);
   const salesStats = buildSalesStats(records).filter((row) => row.label !== "미매칭");
   const unmatchedRecords = records.filter((record) => !normalizeSalesName(record.sales) || record.gubun === "담당자미매칭");
@@ -856,13 +893,13 @@ function CollectionControlTower({
             <h2 className="mt-1 text-[20px] font-[950] tracking-[-0.03em] text-[#111827]">수금 관제 요약</h2>
             <p className="mt-1 text-[12px] font-[750] text-[#64748b]">{sourceMessage}</p>
           </div>
-          <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[12px] font-[950] text-[#1D50A2]">전체 수금률 {summary.collectionRate}%</span>
+          <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[12px] font-[950] text-[#1D50A2]">전체 수금률 {displayCollectionRate}%</span>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <KpiCard icon={WalletCards} label="수금예정액" value={compactKrw(summary.expected)} helper={`${records.length}건`} tone="blue" />
           <KpiCard icon={CheckCircle2} label="수금 완료금액" value={compactKrw(summary.completedAmount)} helper={`완료 기준`} tone="green" />
           <KpiCard icon={AlertTriangle} label="미수금액" value={compactKrw(summary.unpaidAmount)} helper={`${summary.issues.length}건 확인`} tone="orange" />
-          <KpiCard icon={ShieldAlert} label="전체 수금률" value={`${summary.collectionRate}%`} helper="완료금액 / 수금예정액" tone="blue" />
+          <KpiCard icon={ShieldAlert} label="전체 수금률" value={`${displayCollectionRate}%`} helper="수금 웹앱 기준" tone="blue" />
         </div>
       </section>
 
@@ -1592,6 +1629,7 @@ export default function VipsOpsPage() {
   const [collectionSnapshots, setCollectionSnapshots] = useState<ReceivablesStatusSnapshot[]>([]);
   const [arRecords, setArRecords] = useState<DemoArRecord[]>([]);
   const [arSnapshots, setArSnapshots] = useState<ReceivablesAgingSnapshot[]>([]);
+  const [liveReceivablesMeta, setLiveReceivablesMeta] = useState<LiveReceivablesMeta>({ collectionRate: null });
   const [collectionSourceMessage, setCollectionSourceMessage] = useState("기본 샘플 데이터 기준으로 표시 중입니다.");
   const [loading, setLoading] = useState(true);
 
@@ -1642,6 +1680,7 @@ export default function VipsOpsPage() {
     fetch("/api/receivables-live", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
+        setLiveReceivablesMeta(extractLiveReceivablesMeta(payload));
         const records = extractLiveReceivableRecords(payload);
         if (records.length === 0) return;
         setCollectionRecords(records);
@@ -1915,6 +1954,7 @@ export default function VipsOpsPage() {
             arRecords={filteredArRecords}
             cards={collectionOpsCards}
             sourceMessage={collectionSourceMessage}
+            liveCollectionRate={monthFilter === "all" ? liveReceivablesMeta.collectionRate : null}
             onSelect={setSelectedCollectionCard}
           />
         ) : null}

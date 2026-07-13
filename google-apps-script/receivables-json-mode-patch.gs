@@ -1,20 +1,16 @@
 /**
  * OPS Portal JSON mode patch for the existing ICBANQ Receivables web app.
  *
- * How to apply:
- * 1) In the existing receivables Apps Script, replace the current doGet(e)
- *    with the doGet(e) below.
- * 2) Paste every helper function in this file near the bottom of the script.
- * 3) Deploy a new web app version.
- * 4) In Vercel, set OPS_RECEIVABLES_WEBAPP_URL to the web app /exec URL.
+ * Apply this to the receivables Apps Script:
+ * 1. Replace the current doGet(e) with the doGet(e) below.
+ * 2. Paste every helper function near the bottom of the script.
+ * 3. Deploy a new web app version.
  *
- * Normal URL:
+ * HTML dashboard:
  *   /exec
- *   -> existing HTML dashboard
  *
- * JSON URL for OPS:
+ * OPS JSON:
  *   /exec?mode=receivables
- *   -> { ok, updatedAt, summary, records }
  */
 
 function doGet(e) {
@@ -44,15 +40,18 @@ function opsBuildReceivablesPayload_() {
       .map((record, index) => opsNormalizeReceivableRecord_(record, index))
       .filter(record => record && record.name && record.expected > 0);
 
+    const summary = opsBuildReceivablesSummary_(records, overview);
+
     return {
       ok: true,
       updatedAt: new Date().toISOString(),
       source: 'ICBANQ Receivables Dashboard',
-      summary: opsBuildReceivablesSummary_(records),
+      summary,
       records,
       rawOverview: {
         meta: overview && overview.meta ? overview.meta : null,
         kpi: overview && overview.kpi ? overview.kpi : null,
+        rateTrend: overview && overview.rateTrend ? overview.rateTrend : null,
         error: overview && overview.error ? overview.error : ''
       }
     };
@@ -72,6 +71,7 @@ function opsNormalizeReceivableRecord_(record, index) {
   const explicitDiff = opsNumberOrNull_(record.diff);
   const status = opsNormalizeReceivableStatus_(record.status);
   const diff = explicitDiff !== null ? Math.max(0, explicitDiff) : opsInferDiff_(expected, paid, status);
+  const normalizedPaid = paid || Math.max(0, expected - diff);
 
   return {
     id: record.id || ('receivable-live-' + (index + 1)),
@@ -79,26 +79,34 @@ function opsNormalizeReceivableRecord_(record, index) {
     sales: String(record.sales || '').trim(),
     fSales: String(record.fSales || record.fsales || '').trim(),
     name: String(record.name || record.company || '').trim(),
+    company: String(record.name || record.company || '').trim(),
     expected,
-    paid: paid || Math.max(0, expected - diff),
+    expectedAmount: expected,
+    paid: normalizedPaid,
+    paidAmount: normalizedPaid,
     diff,
-    rate: opsNumber_(record.rate) || (expected > 0 ? Math.round(((paid || Math.max(0, expected - diff)) / expected) * 1000) / 10 : 0),
+    unpaidAmount: diff,
+    rate: opsNumber_(record.rate) || (expected > 0 ? Math.round((normalizedPaid / expected) * 1000) / 10 : 0),
     status,
     gubun: String(record.gubun || '').trim(),
     basis: String(record.basis || '').trim(),
     matched_payer: String(record.matched_payer || record.matchedPayer || '').trim(),
+    collectionMonth: String(record.collectionMonth || record.month || '').trim(),
+    dueDate: String(record.dueDate || record.expectedDate || record.date || '').trim(),
     overdueDays: opsNumber_(record.overdueDays),
-    agingBucket: String(record.agingBucket || '').trim()
+    agingBucket: String(record.agingBucket || '').trim(),
+    erpUrl: String(record.erpUrl || record.trackingUrl || record.orderUrl || record.poUrl || record.link || '').trim()
   };
 }
 
-function opsBuildReceivablesSummary_(records) {
+function opsBuildReceivablesSummary_(records, overview) {
   const totalExpected = records.reduce((sum, record) => sum + record.expected, 0);
   const completed = records.filter(record => record.status === '완료');
   const partial = records.filter(record => record.status === '부분수금');
   const unpaid = records.filter(record => record.status === '미수');
   const completedAmount = completed.reduce((sum, record) => sum + record.expected, 0);
   const unpaidAmount = records.reduce((sum, record) => sum + (record.status === '완료' ? 0 : record.diff), 0);
+  const webAppRate = opsNumberOrNull_(overview && overview.kpi ? overview.kpi.rate : null);
 
   return {
     totalCount: records.length,
@@ -109,7 +117,7 @@ function opsBuildReceivablesSummary_(records) {
     partialAmount: partial.reduce((sum, record) => sum + record.diff, 0),
     unpaidCount: unpaid.length,
     unpaidAmount,
-    collectionRate: totalExpected > 0 ? Math.round((completedAmount / totalExpected) * 1000) / 10 : 0
+    collectionRate: webAppRate !== null ? opsNormalizePercent_(webAppRate) : (totalExpected > 0 ? Math.round((completedAmount / totalExpected) * 1000) / 10 : 0)
   };
 }
 
@@ -136,4 +144,9 @@ function opsNumberOrNull_(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = opsNumber_(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function opsNormalizePercent_(value) {
+  const number = opsNumber_(value);
+  return number <= 1 ? Math.round(number * 1000) / 10 : Math.round(number * 10) / 10;
 }
