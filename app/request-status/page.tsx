@@ -11,6 +11,7 @@ import { REQUEST_FORM_CONFIGS, type RequestKind } from "../services/formValidati
 
 type RequestBucket = "received" | "processing" | "done" | "rejected";
 type AdminRequestFilters = {
+  month: string;
   team: string;
   person: string;
   status: "" | RequestBucket;
@@ -45,10 +46,25 @@ const requestKindOptions = Object.values(REQUEST_FORM_CONFIGS).map((config) => (
   label: config.title
 }));
 const defaultAdminFilters: AdminRequestFilters = {
+  month: "all",
   team: "",
   person: "",
   status: ""
 };
+
+function normalizeRequestMonth(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const iso = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}`;
+  return "";
+}
+
+function formatMonthLabel(month: string) {
+  const match = String(month || "").match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
+  if (!match) return month;
+  return `${match[1]}년 ${Number(match[2])}월`;
+}
 
 function normalizeTeamName(value: string) {
   const key = String(value || "").trim();
@@ -144,6 +160,7 @@ function readAdminFilters(): AdminRequestFilters {
   const params = new URLSearchParams(window.location.search);
   const status = params.get("status") ?? "";
   return {
+    month: params.get("month") ?? "all",
     team: params.get("team") ?? "",
     person: params.get("person") ?? "",
     status: ["received", "processing", "done", "rejected"].includes(status) ? (status as RequestBucket) : ""
@@ -182,6 +199,7 @@ export default function RequestStatusPage() {
         if (kindSet.size > 0 && (!item.kind || !kindSet.has(item.kind))) return false;
         if (query.status && requestBucket(item.status) !== query.status) return false;
         if (query.date === "today" && !isToday(item)) return false;
+        if (adminFilters.month !== "all" && normalizeRequestMonth(item.requestedAt) !== adminFilters.month) return false;
         if (requesterSet.size > 0 && !requesterSet.has(requesterKey(item.requester))) return false;
         if (assigneeSet.size > 0) {
           const owners = (item.assignedOwners ?? []).map((owner) => requesterKey(owner));
@@ -199,6 +217,15 @@ export default function RequestStatusPage() {
       })
       .sort((a, b) => String(b.requestedAt).localeCompare(String(a.requestedAt)));
   }, [adminFilters, items, query, selectedUser]);
+
+  const monthOptions = useMemo(() => {
+    const months = new Set<string>(["2026-06"]);
+    items.forEach((item) => {
+      const month = normalizeRequestMonth(item.requestedAt);
+      if (month) months.add(month);
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [items]);
 
   const adminPersonOptions = useMemo(() => {
     const names = new Set<string>();
@@ -390,7 +417,22 @@ export default function RequestStatusPage() {
           </div>
 
           {isAdminUser ? (
-            <div className="mt-5 grid gap-3 rounded-[18px] border border-[#d8e4f3] bg-[#f8fbff] p-4 md:grid-cols-5">
+            <div className="mt-5 grid gap-3 rounded-[18px] border border-[#d8e4f3] bg-[#f8fbff] p-4 md:grid-cols-6">
+              <label className="min-w-0">
+                <span className="block text-[11px] font-[850] text-[#64748b]">월별</span>
+                <select
+                  value={adminFilters.month}
+                  onChange={(event) => setAdminFilters((current) => ({ ...current, month: event.target.value }))}
+                  className="mt-2 h-10 w-full rounded-[13px] border border-[#d8e4f3] bg-white px-3 text-[13px] font-[750] text-[#10203f] outline-none transition focus:border-[#1D50A2]"
+                >
+                  <option value="all">전체 월</option>
+                  {monthOptions.map((month) => (
+                    <option key={month} value={month}>
+                      {formatMonthLabel(month)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="min-w-0">
                 <span className="block text-[11px] font-[850] text-[#64748b]">요청종류</span>
                 <select
@@ -465,7 +507,22 @@ export default function RequestStatusPage() {
               </div>
             </div>
           ) : (
-            <div className="mt-5 grid gap-3 rounded-[18px] border border-[#d8e4f3] bg-[#f8fbff] p-4 sm:grid-cols-[minmax(0,280px)_auto]">
+            <div className="mt-5 grid gap-3 rounded-[18px] border border-[#d8e4f3] bg-[#f8fbff] p-4 sm:grid-cols-[minmax(0,220px)_minmax(0,280px)_auto]">
+              <label className="min-w-0">
+                <span className="block text-[11px] font-[850] text-[#64748b]">월별</span>
+                <select
+                  value={adminFilters.month}
+                  onChange={(event) => setAdminFilters((current) => ({ ...current, month: event.target.value }))}
+                  className="mt-2 h-10 w-full rounded-[13px] border border-[#d8e4f3] bg-white px-3 text-[13px] font-[750] text-[#10203f] outline-none transition focus:border-[#1D50A2]"
+                >
+                  <option value="all">전체 월</option>
+                  {monthOptions.map((month) => (
+                    <option key={month} value={month}>
+                      {formatMonthLabel(month)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="min-w-0">
                 <span className="block text-[11px] font-[850] text-[#64748b]">요청종류</span>
                 <select
@@ -484,7 +541,10 @@ export default function RequestStatusPage() {
               <div className="flex min-w-0 items-end">
                 <button
                   type="button"
-                  onClick={() => setQuery((current) => ({ ...current, kind: "" }))}
+                  onClick={() => {
+                    setAdminFilters((current) => ({ ...current, month: "all" }));
+                    setQuery((current) => ({ ...current, kind: "" }));
+                  }}
                   className="h-10 rounded-[13px] border border-[#d8e4f3] bg-white px-4 text-[12px] font-[850] text-[#1D50A2] transition hover:bg-[#edf4ff]"
                 >
                   필터 초기화

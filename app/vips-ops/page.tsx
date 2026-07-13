@@ -58,6 +58,7 @@ type DemoArRecord = {
   amount: number;
   ar: number;
   overdueDays: number;
+  agingBucket?: string;
   status: string;
 };
 
@@ -194,6 +195,19 @@ function normalizeOpsMonth(value?: unknown) {
   const short = raw.match(/(0?[1-9]|1[0-2])\s*월/);
   if (short) return `${new Date().getFullYear()}-${String(Number(short[1])).padStart(2, "0")}`;
   return "";
+}
+
+function formatOpsMonthLabel(month: string) {
+  const match = month.match(/^(20\d{2})-(\d{2})$/);
+  if (!match) return month || "전체 월";
+  return `${match[1]}년 ${Number(match[2])}월`;
+}
+
+function formatOpsBasisDate(value?: string | null) {
+  if (!value) return "데이터 대기";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "데이터 대기";
+  return date.toLocaleDateString("ko-KR");
 }
 
 function monthFromDateText(value?: string | null) {
@@ -1712,6 +1726,7 @@ export default function VipsOpsPage() {
 
   const monthOptions = useMemo(() => {
     const months = new Set<string>();
+    months.add("2026-06");
     closingSnapshots.forEach((snapshot) => {
       const month = monthEndSnapshotMonth(snapshot);
       if (month) months.add(month);
@@ -1886,6 +1901,18 @@ export default function VipsOpsPage() {
     setMonthEndActionRequests(updateMonthEndActionRequestStatus(request.id, status));
   };
 
+  const opsBasisAt = useMemo(() => {
+    const candidates = [
+      ...activeClosingSnapshots.map((snapshot) => snapshot.uploadedAt),
+      ...activeRmaSnapshots.map((snapshot) => snapshot.uploadedAt),
+      ...activeCollectionSnapshots.map((snapshot) => snapshot.uploadedAt),
+      ...activeArSnapshots.map((snapshot) => snapshot.uploadedAt)
+    ].filter(Boolean);
+    return candidates.sort((a, b) => b.localeCompare(a))[0] ?? "";
+  }, [activeArSnapshots, activeClosingSnapshots, activeCollectionSnapshots, activeRmaSnapshots]);
+  const opsMonthLabel = monthFilter === "all" ? "전체 월" : formatOpsMonthLabel(monthFilter);
+  const opsBasisLabel = formatOpsBasisDate(opsBasisAt);
+
   const canAccess = selectedUser.accessRole === "admin";
   if (!canAccess) return <AccessDenied />;
 
@@ -1929,10 +1956,14 @@ export default function VipsOpsPage() {
               >
                 <option value="all">전체 월</option>
                 {monthOptions.map((month) => (
-                  <option key={month} value={month}>{month}</option>
+                  <option key={month} value={month}>{formatOpsMonthLabel(month)}</option>
                 ))}
               </select>
             </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-[12px] font-[900]">
+            <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[#1D50A2]">기준월 {opsMonthLabel}</span>
+            <span className="rounded-full bg-[#f8fbff] px-3 py-1 text-[#64748b]">기준일 {opsBasisLabel}</span>
           </div>
         </section>
 

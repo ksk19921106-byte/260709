@@ -75,6 +75,7 @@ type DemoArRecord = {
   amount: number;
   ar: number;
   overdueDays: number;
+  agingBucket?: string;
   status: string;
 };
 
@@ -192,6 +193,12 @@ function normalizeCollectionMonth(value?: string | number | null) {
   }
 
   return "";
+}
+
+function formatMonthLabel(month: string) {
+  const match = String(month || "").match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
+  if (!match) return month;
+  return `${match[1]}년 ${Number(match[2])}월`;
 }
 
 function normalizeCollectionStatus(value: string): "완료" | "부분수금" | "미수" {
@@ -445,6 +452,37 @@ function parsePaymentRows(rows: string[][]): DemoPayment[] {
 function parseArRows(rows: string[][]): DemoArRecord[] {
   if (rows.length < 2) return [];
   const headers = rows[0].map((header) => String(header ?? "").trim());
+  const simpleCompanyIdx = headers.findIndex((header) => /^(업체명|거래처|company)$/i.test(header));
+  const simpleAmountIdx = headers.findIndex((header) => /(예정금액|미수금액|ar금액|금액)/i.test(header) && !/기간|일자|일수/i.test(header));
+  const simpleMemoIdx = headers.findIndex((header) => /(비고|매칭근거|구분|필터)/i.test(header));
+  const simpleDaysIdx = headers.findIndex((header) => /(ar\s*기간|ar기간|경과일|연체일|overdue)/i.test(header));
+
+  if (simpleCompanyIdx >= 0 && simpleAmountIdx >= 0 && simpleDaysIdx >= 0 && headers.length <= 8) {
+    return rows
+      .slice(1)
+      .map((cells, index) => {
+        const company = String(cells[simpleCompanyIdx] ?? "").trim();
+        const ar = parseAmount(cells[simpleAmountIdx]);
+        const overdueDays = parseAgingDays(cells[simpleDaysIdx], "", "미수");
+        const memo = simpleMemoIdx >= 0 ? String(cells[simpleMemoIdx] ?? "").trim() : "";
+        return {
+          id: `simple-ar-${normalizeMatchText(company) || "row"}-${index}`,
+          company,
+          sales: "",
+          team: "미매칭",
+          poid: "회사별 AR",
+          poitemId: "",
+          itemName: memo || "미수금 Aging",
+          amount: ar,
+          ar,
+          overdueDays,
+          agingBucket: normalizeAgingBucket("", overdueDays),
+          status: "미수"
+        };
+      })
+      .filter((row) => row.company && !/총합계|합계|grand\s*total/i.test(row.company) && row.ar > 0);
+  }
+
   const compactCompanyIdx = headers.findIndex((header) => /행\s*레이블|company|거래처|업체/i.test(header));
   const compactDaysIdx = headers.findIndex((header) => /경과|aging|overdue/i.test(header));
   const compactArIdx = headers.findIndex((header) => /ar|미수|지연\s*금액|지연금액|금액/i.test(header));
@@ -561,6 +599,36 @@ function parseReceivableStatusRows(rows: string[][]): ReceivableRecord[] {
       };
     })
     .filter((record) => record.name && record.expected > 0);
+}
+
+function enrichArRecordsWithReceivables(records: DemoArRecord[], receivables: ReceivableRecord[]) {
+  const candidates = receivables
+    .map((record) => ({
+      key: normalizeMatchText(record.name),
+      sales: normalizeSalesName(record.sales),
+      team: normalizeTeamName(record.team),
+      dueDate: record.dueDate,
+      collectionMonth: record.collectionMonth
+    }))
+    .filter((record) => record.key);
+
+  return records.map((record) => {
+    const existingSales = normalizeSalesName(record.sales);
+    if (existingSales) return { ...record, sales: existingSales, team: normalizeTeamName(record.team || existingSales) };
+
+    const key = normalizeMatchText(record.company);
+    const matched = candidates.find((candidate) => candidate.key === key)
+      ?? candidates.find((candidate) => key.includes(candidate.key) || candidate.key.includes(key));
+
+    if (!matched) return record;
+    return {
+      ...record,
+      sales: matched.sales,
+      team: matched.team,
+      dueDate: record.dueDate || matched.dueDate,
+      collectionMonth: record.collectionMonth || matched.collectionMonth
+    };
+  });
 }
 
 function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: number): ReceivableRecord | null {
@@ -784,6 +852,7 @@ export default function CollectionsPage() {
   const monthFilterOptions = useMemo(() => {
     const source = isAdmin ? recordsWithAssignments : visibleRecords;
     const months = new Set<string>();
+    months.add("2026-06");
     for (const record of source) {
       const month = normalizeCollectionMonth(record.collectionMonth ?? record.dueDate);
       if (month) months.add(month);
@@ -1339,7 +1408,7 @@ export default function CollectionsPage() {
     setIsReadingFile(true);
     try {
       const rows = await parseSpreadsheetFile(file);
-      const parsed = parseArRows(rows);
+      const parsed = enrichArRecordsWithReceivables(parseArRows(rows), recordsWithAssignments);
       setArRecords(parsed);
       window.localStorage.setItem(AR_DEMO_KEY, JSON.stringify(parsed));
       const uploadedAt = new Date().toISOString();
@@ -1460,7 +1529,7 @@ export default function CollectionsPage() {
             >
               <option value="all">전체 월</option>
               {monthFilterOptions.map((month) => (
-                <option key={month} value={month}>{month}</option>
+                <option key={month} value={month}>{formatMonthLabel(month)}</option>
               ))}
             </select>
             {isAdmin ? (

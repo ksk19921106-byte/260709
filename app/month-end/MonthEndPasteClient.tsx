@@ -202,6 +202,20 @@ function visibleRmaRecords(records: MonthEndRmaRecord[], selectedSalesName: stri
   return accountScoped.filter((record) => normalizeName(record.sales) === normalizeName(selectedSalesName));
 }
 
+function normalizeMonthValue(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  if (match) return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
+  return "";
+}
+
+function formatMonthLabel(month: string) {
+  const match = String(month || "").match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
+  if (!match) return month;
+  return `${match[1]}년 ${Number(match[2])}월`;
+}
+
 export function MonthEndPasteClient() {
   const { selectedUser } = useSelectedUser();
   const isAdmin = selectedUser.accessRole === "admin";
@@ -211,6 +225,7 @@ export function MonthEndPasteClient() {
   const [snapshot, setSnapshot] = useState<ClosingSnapshot | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  const [monthFilter, setMonthFilter] = useState("all");
   const [teamFilter, setTeamFilter] = useState("all");
   const [salesFilter, setSalesFilter] = useState("all");
   const [message, setMessage] = useState(isAdmin ? "ERP 월마감 데이터를 붙여넣고 데이터 인식하기를 눌러주세요." : "VIPS팀/Admin이 업로드한 최신 월마감 데이터를 불러오는 중입니다.");
@@ -228,8 +243,10 @@ export function MonthEndPasteClient() {
     const params = new URLSearchParams(window.location.search);
     const initialTeam = params.get("team");
     const initialSales = params.get("sales");
+    const initialMonth = params.get("month");
     if (initialTeam && (fixedTeamOptions.includes(initialTeam) || initialTeam === "all")) setTeamFilter(initialTeam);
     if (initialSales) setSalesFilter(initialSales);
+    if (initialMonth) setMonthFilter(initialMonth);
 
     const loadLatestSnapshot = async () => {
       const browserSnapshot = readSnapshot();
@@ -264,6 +281,19 @@ export function MonthEndPasteClient() {
   const allIssuesRaw = isAdmin ? recognizedIssues.length > 0 ? recognizedIssues : snapshot?.issues ?? [] : snapshot?.issues ?? [];
   const allIssues = allIssuesRaw.filter((issue) => isVisibleMonthEndIssue(issue) && hasPortalAccount(issue));
 
+  const monthFilterOptions = useMemo(() => {
+    const months = new Set<string>(["2026-06"]);
+    if (snapshot?.closingMonth) {
+      const month = normalizeMonthValue(snapshot.closingMonth);
+      if (month) months.add(month);
+    }
+    for (const issue of allIssues) {
+      const month = normalizeMonthValue(issue.uploadedAt);
+      if (month) months.add(month);
+    }
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [allIssues, snapshot?.closingMonth]);
+
   const permissionIssues = useMemo(() => {
     if (isAdmin) return allIssues;
     if (isManager) return allIssues.filter((issue) => issue.fSales === selectedUser.salesName);
@@ -297,6 +327,8 @@ export function MonthEndPasteClient() {
   const filteredIssues = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return permissionIssues.filter((issue) => {
+      const issueMonth = normalizeMonthValue(issue.uploadedAt) || normalizeMonthValue(snapshot?.closingMonth);
+      const matchMonth = monthFilter === "all" || issueMonth === monthFilter;
       const matchTeam = teamFilter === "all" || issue.team === teamFilter;
       const matchSales = salesFilter === "all" || issue.fSales === salesFilter || issue.iSales === salesFilter;
       const matchFilter = filter === "all" || filter === "mine" || issue.issueType === filter;
@@ -305,18 +337,20 @@ export function MonthEndPasteClient() {
         issue.company.toLowerCase().includes(keyword) ||
         issue.fSales.toLowerCase().includes(keyword) ||
         issue.iSales.toLowerCase().includes(keyword);
-      return matchTeam && matchSales && matchFilter && matchQuery;
+      return matchMonth && matchTeam && matchSales && matchFilter && matchQuery;
     });
-  }, [filter, permissionIssues, query, salesFilter, teamFilter]);
+  }, [filter, monthFilter, permissionIssues, query, salesFilter, snapshot?.closingMonth, teamFilter]);
 
   const metricIssues = useMemo(
     () =>
       permissionIssues.filter((issue) => {
+        const issueMonth = normalizeMonthValue(issue.uploadedAt) || normalizeMonthValue(snapshot?.closingMonth);
+        const matchMonth = monthFilter === "all" || issueMonth === monthFilter;
         const matchTeam = teamFilter === "all" || issue.team === teamFilter;
         const matchSales = salesFilter === "all" || issue.fSales === salesFilter || issue.iSales === salesFilter;
-        return matchTeam && matchSales;
+        return matchMonth && matchTeam && matchSales;
       }),
-    [permissionIssues, salesFilter, teamFilter]
+    [monthFilter, permissionIssues, salesFilter, snapshot?.closingMonth, teamFilter]
   );
   const kpi = useMemo(() => kpiFor(metricIssues), [metricIssues]);
   const salesGroups = useMemo(() => groupBySales(metricIssues), [metricIssues]);
@@ -333,6 +367,7 @@ export function MonthEndPasteClient() {
     setRecognizedIssues(result.ok ? result.issues : []);
     if (result.ok) {
       setFilter("all");
+      setMonthFilter("all");
       setTeamFilter("all");
       setSalesFilter("all");
       setQuery("");
@@ -377,6 +412,7 @@ export function MonthEndPasteClient() {
     setPasteText("");
     setRecognizedIssues([]);
     setFilter("all");
+    setMonthFilter("all");
     setTeamFilter("all");
     setSalesFilter("all");
     setQuery("");
@@ -613,32 +649,45 @@ export function MonthEndPasteClient() {
             </div>
           </div>
 
-          {isAdmin ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
-              <span className="text-[12px] font-[950] text-[#64748b]">팀 필터</span>
-              <select
-                value={teamFilter}
-                onChange={(event) => setTeamFilter(event.target.value)}
-                className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
-              >
-                <option value="all">전체 팀</option>
-                {teamFilterOptions.map((team) => (
-                  <option key={team} value={team}>{team}</option>
-                ))}
-              </select>
-              <span className="text-[12px] font-[950] text-[#64748b]">담당자 필터</span>
-              <select
-                value={salesFilter}
-                onChange={(event) => setSalesFilter(event.target.value)}
-                className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
-              >
-                <option value="all">전체 담당자</option>
-                {salesFilterOptions.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </div>
-          ) : null}
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[16px] border border-[#e5eaf3] bg-[#fbfdff] px-3 py-3">
+            <span className="text-[12px] font-[950] text-[#64748b]">월별</span>
+            <select
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+              className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+            >
+              <option value="all">전체 월</option>
+              {monthFilterOptions.map((month) => (
+                <option key={month} value={month}>{formatMonthLabel(month)}</option>
+              ))}
+            </select>
+            {isAdmin ? (
+              <>
+                <span className="text-[12px] font-[950] text-[#64748b]">팀 필터</span>
+                <select
+                  value={teamFilter}
+                  onChange={(event) => setTeamFilter(event.target.value)}
+                  className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+                >
+                  <option value="all">전체 팀</option>
+                  {teamFilterOptions.map((team) => (
+                    <option key={team} value={team}>{team}</option>
+                  ))}
+                </select>
+                <span className="text-[12px] font-[950] text-[#64748b]">담당자 필터</span>
+                <select
+                  value={salesFilter}
+                  onChange={(event) => setSalesFilter(event.target.value)}
+                  className="h-9 rounded-full border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+                >
+                  <option value="all">전체 담당자</option>
+                  {salesFilterOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+          </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
             {filterOptions.map((option) => (
