@@ -9,6 +9,23 @@ import { monthlyItems } from "./homeData";
 
 type MonthlyItemKey = "invoice_required" | "shipment_check" | "long_pending" | "rma" | "customs";
 type SelectedMonthlyItem = (typeof monthlyItems)[number];
+export type HomeMonthlyTask = {
+  id: string;
+  source: "monthEnd";
+  label: string;
+  count: number;
+  amount: string;
+  description: string;
+  openKey: string;
+};
+
+const monthlyDescriptions: Record<string, string> = {
+  invoice_required: "출고는 완료됐지만 세금계산서가 아직 발행되지 않은 건입니다.",
+  shipment_check: "입고 또는 계산서는 되었지만 고객 출고가 완료되지 않은 건입니다.",
+  long_pending: "입고 후 출고와 계산서 발행이 모두 남아 있는 건입니다.",
+  rma: "RMA 처리 상태를 Sales가 확인해야 하는 건입니다.",
+  customs: "관세 미수금 확인이 필요한 건입니다."
+};
 
 function formatWon(value: number) {
   return `${Math.round(value).toLocaleString("ko-KR")}원`;
@@ -30,6 +47,31 @@ function rmaMatchesUser(record: MonthEndRmaRecord, userName: string, isAdmin: bo
 
 function titleForKey(key: MonthlyItemKey) {
   return monthlyItems.find((item) => item.key === key)?.label ?? "월마감 이슈";
+}
+
+function issueHref(issue: ClosingIssue) {
+  return issue.erpUrl || issue.trackingUrl || issue.orderUrl || "";
+}
+
+function HomeRowLink({ href }: { href?: string }) {
+  if (!href) {
+    return (
+      <span className="inline-flex h-8 min-w-[72px] items-center justify-center rounded-full bg-[#f8fafc] px-3 text-[11px] font-[950] text-[#94a3b8]">
+        준비중
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-8 min-w-[72px] items-center justify-center rounded-full bg-[#edf4ff] px-3 text-[11px] font-[950] text-[#1D50A2] transition hover:bg-[#dbeafe]"
+    >
+      바로가기
+    </a>
+  );
 }
 
 function MonthlyIssueModal({
@@ -90,7 +132,7 @@ function MonthlyIssueModal({
               </tbody>
             </table>
           ) : (
-            <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+            <table className="w-full min-w-[860px] border-separate border-spacing-0 text-left">
               <thead className="text-[12px] font-[900] text-[#64748b]">
                 <tr>
                   <th className="border-b border-[#e5e7eb] px-3 py-2">부서명</th>
@@ -100,11 +142,12 @@ function MonthlyIssueModal({
                   <th className="border-b border-[#e5e7eb] px-3 py-2">GPD</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2">GP</th>
                   <th className="border-b border-[#e5e7eb] px-3 py-2">미발행/미출고 기간</th>
+                  <th className="border-b border-[#e5e7eb] px-3 py-2">바로가기</th>
                 </tr>
               </thead>
               <tbody className="text-[13px] font-[750] text-[#111827]">
                 {issues.length === 0 ? (
-                  <tr><td colSpan={7} className="px-3 py-10 text-center text-[#94a3b8]">조건에 맞는 월마감 이슈가 없습니다.</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-10 text-center text-[#94a3b8]">조건에 맞는 월마감 이슈가 없습니다.</td></tr>
                 ) : (
                   issues.map((issue) => (
                     <tr key={issue.id}>
@@ -115,6 +158,9 @@ function MonthlyIssueModal({
                       <td className="border-b border-[#edf2f8] px-3 py-3">{formatWon(issue.gpdAmount ?? 0)}</td>
                       <td className="border-b border-[#edf2f8] px-3 py-3">{issue.gpRate != null ? `${issue.gpRate}%` : "-"}</td>
                       <td className="border-b border-[#edf2f8] px-3 py-3">{issue.issueType === "invoice_required" ? `${issue.taxIssueDays ?? 0}일` : `${issue.shipmentDays ?? 0}일`}</td>
+                      <td className="border-b border-[#edf2f8] px-3 py-3">
+                        <HomeRowLink href={issueHref(issue)} />
+                      </td>
                     </tr>
                   ))
                 )}
@@ -127,7 +173,13 @@ function MonthlyIssueModal({
   );
 }
 
-export function MonthlyCheckCard() {
+export function MonthlyCheckCard({
+  onTaskCountChange,
+  onTaskItemsChange
+}: {
+  onTaskCountChange?: (count: number) => void;
+  onTaskItemsChange?: (items: HomeMonthlyTask[]) => void;
+}) {
   const { selectedUser } = useSelectedUser();
   const [snapshot, setSnapshot] = useState<ClosingSnapshot | null>(null);
   const [rmaSnapshot, setRmaSnapshot] = useState<MonthEndRmaSnapshot | null>(null);
@@ -158,22 +210,61 @@ export function MonthlyCheckCard() {
     return scopedIssues.filter((issue) => issue.issueType === item.key as ClosingIssueType);
   };
 
-  const displayItems = monthlyItems.map((item) => {
-    if (item.key === "rma") {
-      return {
-        ...item,
-        count: `${scopedRmaRecords.length || Number(item.count.replace(/[^0-9]/g, ""))}건`
-      };
-    }
-    if (item.key === "customs") return item;
-    const issues = scopedIssues.filter((issue) => issue.issueType === item.key as ClosingIssueType);
-    if (issues.length === 0) return item;
-    return {
-      ...item,
-      count: `${issues.length}건`,
-      amount: item.key === "long_pending" ? "상태: 입고 완료" : formatWon(issues.reduce((sum, issue) => sum + issue.amount, 0))
+  const displayItems = useMemo(
+    () =>
+      monthlyItems.map((item) => {
+        if (item.key === "rma") {
+          return {
+            ...item,
+            count: `${scopedRmaRecords.length}건`,
+            amount: scopedRmaRecords.length > 0 ? item.amount : "0원"
+          };
+        }
+        if (item.key === "customs") return { ...item, count: "0건", amount: "0원" };
+        const issues = scopedIssues.filter((issue) => issue.issueType === item.key as ClosingIssueType);
+        if (issues.length === 0) return { ...item, count: "0건", amount: "0원" };
+        return {
+          ...item,
+          count: `${issues.length}건`,
+          amount: item.key === "long_pending" ? "상태: 입고 완료" : formatWon(issues.reduce((sum, issue) => sum + issue.amount, 0))
+        };
+      }),
+    [scopedIssues, scopedRmaRecords.length]
+  );
+  const taskCount = useMemo(() => displayItems.filter((item) => Number(item.count.replace(/[^0-9]/g, "")) > 0).length, [displayItems]);
+  const taskItems = useMemo(
+    () =>
+      displayItems
+        .map((item) => ({
+          id: `month-${item.key}`,
+          source: "monthEnd" as const,
+          label: item.label,
+          count: Number(item.count.replace(/[^0-9]/g, "")),
+          amount: item.amount,
+          description: monthlyDescriptions[item.key] ?? "월마감 전 확인이 필요한 거래입니다.",
+          openKey: String(item.key)
+        }))
+        .filter((item) => item.count > 0),
+    [displayItems]
+  );
+
+  useEffect(() => {
+    onTaskCountChange?.(taskCount);
+  }, [onTaskCountChange, taskCount]);
+
+  useEffect(() => {
+    onTaskItemsChange?.(taskItems);
+  }, [onTaskItemsChange, taskItems]);
+
+  useEffect(() => {
+    const openMonthlyItem = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      const item = displayItems.find((entry) => entry.key === key);
+      if (item) setSelectedItem(item);
     };
-  });
+    window.addEventListener("icbanq:home-open-monthly-task", openMonthlyItem);
+    return () => window.removeEventListener("icbanq:home-open-monthly-task", openMonthlyItem);
+  }, [displayItems]);
 
   return (
     <section className="min-w-0 overflow-hidden rounded-[20px] border border-[#e9eef6] bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.032)]">
@@ -182,7 +273,7 @@ export function MonthlyCheckCard() {
           <h2 className="truncate text-[18px] font-[950] tracking-[-0.02em] text-[#111827]">월마감 체크</h2>
           <p className="mt-1 truncate text-[12px] font-[750] text-[#64748b]">세금계산서, 출고, RMA, 관세 이슈를 확인합니다.</p>
         </div>
-        <span className="shrink-0 rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#F39945]">6건</span>
+        <span className="shrink-0 rounded-full bg-[#fff5ec] px-3 py-1 text-[12px] font-[950] text-[#F39945]">{taskCount.toLocaleString("ko-KR")}건</span>
       </div>
 
       <div className="mt-4 grid min-w-0 grid-cols-2 gap-2.5 min-[1180px]:grid-cols-5">

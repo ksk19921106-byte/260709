@@ -3,14 +3,21 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import type { MonthEndGateStatus } from "../../../services/monthEndGate";
 import { buildTradeCloseSummary, getTradeCloseSummaryForUser, type TradeCloseRecord } from "../../../services/tradeClose";
+import { readSharedCollection, writeSharedCollection } from "../../../services/sharedStorageServer";
 
 export const runtime = "nodejs";
 
 const blockedUsersPath = path.join(process.cwd(), "data", "blocked-users.json");
 const tradeClosePath = path.join(process.cwd(), "data", "trade-close-records.json");
 const monthEndSnapshotPath = path.join(process.cwd(), "data", "month-end-snapshot.json");
+const visibleMonthEndIssueTypes = new Set(["invoice_required", "shipment_check", "long_pending"]);
 
 async function readBlockedUsers(): Promise<Record<string, MonthEndGateStatus>> {
+  const sharedUsers = await readSharedCollection<Record<string, MonthEndGateStatus>>("blockedUsers");
+  if (sharedUsers && typeof sharedUsers === "object" && !Array.isArray(sharedUsers)) {
+    return sharedUsers;
+  }
+
   try {
     return JSON.parse(await readFile(blockedUsersPath, "utf8")) as Record<string, MonthEndGateStatus>;
   } catch {
@@ -27,6 +34,13 @@ async function readTradeCloseRecords(): Promise<TradeCloseRecord[]> {
 }
 
 async function readMonthEndSnapshotIssues(): Promise<Array<{ fSales?: string; iSales?: string; status?: string; issueType?: string; amount?: number }>> {
+  const sharedSnapshot = await readSharedCollection<{
+    issues?: Array<{ fSales?: string; iSales?: string; status?: string; issueType?: string; amount?: number }>;
+  }>("monthEndSnapshot");
+  if (sharedSnapshot?.issues) {
+    return sharedSnapshot.issues;
+  }
+
   try {
     const snapshot = JSON.parse(await readFile(monthEndSnapshotPath, "utf8")) as {
       issues?: Array<{ fSales?: string; iSales?: string; status?: string; issueType?: string; amount?: number }>;
@@ -38,8 +52,14 @@ async function readMonthEndSnapshotIssues(): Promise<Array<{ fSales?: string; iS
 }
 
 async function writeBlockedUsers(users: Record<string, MonthEndGateStatus>) {
-  await mkdir(path.dirname(blockedUsersPath), { recursive: true });
-  await writeFile(blockedUsersPath, JSON.stringify(users, null, 2), "utf8");
+  await writeSharedCollection("blockedUsers", users);
+
+  try {
+    await mkdir(path.dirname(blockedUsersPath), { recursive: true });
+    await writeFile(blockedUsersPath, JSON.stringify(users, null, 2), "utf8");
+  } catch {
+    // Vercel file system is not persistent. Shared storage is used when configured.
+  }
 }
 
 export async function GET(request: Request) {
@@ -47,7 +67,7 @@ export async function GET(request: Request) {
   const user = url.searchParams.get("user");
   const users = await readBlockedUsers();
   const tradeCloseDashboard = buildTradeCloseSummary(await readTradeCloseRecords());
-  const monthEndIssues = (await readMonthEndSnapshotIssues()).filter((issue) => issue.status !== "done" && issue.issueType !== "collection_check");
+  const monthEndIssues = (await readMonthEndSnapshotIssues()).filter((issue) => issue.status === "open" && visibleMonthEndIssueTypes.has(String(issue.issueType)));
 
   if (!user) {
     const tradeBlockedUsers = Object.fromEntries(
@@ -56,7 +76,11 @@ export async function GET(request: Request) {
     const monthEndBlockedUsers = Object.fromEntries(
       Array.from(new Set(monthEndIssues.flatMap((issue) => [issue.iSales, issue.fSales]).filter(Boolean) as string[])).map((salesName) => [salesName, "BLOCK" as MonthEndGateStatus])
     );
-    return NextResponse.json({ users: { ...users, ...tradeBlockedUsers, ...monthEndBlockedUsers }, tradeClose: tradeCloseDashboard });
+    return NextResponse.json({
+      users,
+      effectiveUsers: { ...users, ...tradeBlockedUsers, ...monthEndBlockedUsers },
+      tradeClose: tradeCloseDashboard
+    });
   }
 
   const tradeClose = getTradeCloseSummaryForUser(tradeCloseDashboard, user);

@@ -58,9 +58,13 @@ export function Home({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [showBriefing, setShowBriefing] = useState(false);
+  const [monthlyTaskCount, setMonthlyTaskCount] = useState(0);
+  const [collectionTaskCount, setCollectionTaskCount] = useState(0);
+  const [delayedTaskCount, setDelayedTaskCount] = useState(0);
   const results = useMemo(() => searchGlobal(query, 6), [query]);
   const briefingReasons = useMemo(() => getTodayBriefingReasons(userName), [userName]);
   const showResults = query.trim().length > 0;
+  const todayTaskCount = monthlyTaskCount + collectionTaskCount + delayedTaskCount;
 
   useEffect(() => {
     if (briefingReasons.length === 0) return;
@@ -157,11 +161,11 @@ export function Home({
           title="오늘 해야 할 업무"
           description="오늘 처리할 업무와 이번 주 운영 흐름을 먼저 확인합니다."
         >
-          <HeroSection userName={userName} />
+          <HeroSection userName={userName} taskCount={todayTaskCount} />
           <WeeklyOpsCalendar />
           <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-            <MonthlyCheckCard />
-            <CollectionCheckCard />
+            <MonthlyCheckCard onTaskCountChange={setMonthlyTaskCount} />
+            <CollectionCheckCard onTaskCountChange={setCollectionTaskCount} />
           </div>
         </HomeGroup>
 
@@ -173,7 +177,7 @@ export function Home({
           <GatekeeperBanner />
           <div className="grid min-w-0 gap-3 lg:grid-cols-2">
             <QuickRequestSection onSelectRequestKind={onSelectRequestKind} />
-            <RequestStatusSection />
+            <RequestStatusSection onDelayedTaskCountChange={setDelayedTaskCount} />
           </div>
         </HomeGroup>
 

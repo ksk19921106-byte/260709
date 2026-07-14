@@ -440,8 +440,10 @@ function salesTeam(name: string) {
   return salesTeamMap[name] ?? "S3";
 }
 
+const visibleMonthEndIssueTypes = new Set<ClosingIssue["issueType"]>(["invoice_required", "shipment_check", "long_pending"]);
+
 function openClosingIssues(snapshot: ClosingSnapshot | null) {
-  return (snapshot?.issues ?? []).filter((issue) => issue.status === "open" && issue.issueType !== "collection_check");
+  return (snapshot?.issues ?? []).filter((issue) => issue.status === "open" && visibleMonthEndIssueTypes.has(issue.issueType));
 }
 
 function issuesForSales(issues: ClosingIssue[], salesName: string) {
@@ -1243,7 +1245,7 @@ function GatekeeperControlPanel({
                     row.effectiveStatus === "BLOCK" ? "bg-[#fff5ec] text-[#F39945]" : "bg-[#edf4ff] text-[#1D50A2]"
                   }`}
                 >
-                  {row.effectiveStatus === "BLOCK" ? "차단" : "정상"}
+                  {row.effectiveStatus === "BLOCK" ? (row.issueCount > 0 ? "자동차단" : "수동차단") : "정상"}
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -1256,7 +1258,8 @@ function GatekeeperControlPanel({
                   </button>
                   <button
                     type="button"
-                    disabled={savingUser === row.name}
+                    disabled={savingUser === row.name || row.issueCount > 0}
+                    title={row.issueCount > 0 ? "월마감 이슈가 남아 있어 차단해제할 수 없습니다." : "수동 차단을 해제합니다."}
                     onClick={() => handleUpdate(row.name, "OK")}
                     className="h-9 rounded-xl border border-[#dce6f3] bg-white px-3 text-[12px] font-[950] text-[#1D50A2] disabled:opacity-50"
                   >

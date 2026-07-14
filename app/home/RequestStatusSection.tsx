@@ -1,11 +1,17 @@
-﻿"use client";
+"use client";
 
-const statusItems = [
-  { label: "접수", value: "12", color: "text-[#64748b]", bg: "bg-[#f1f5f9]" },
-  { label: "처리중", value: "8", color: "text-[#F39945]", bg: "bg-[#fff5ec]" },
-  { label: "완료", value: "23", color: "text-[#1D50A2]", bg: "bg-[#edf4ff]" },
-  { label: "반려", value: "2", color: "text-[#F39945]", bg: "bg-[#fff5ec]" }
-];
+import { useEffect, useMemo, useState } from "react";
+import { useSelectedUser } from "../hooks/useSelectedUser";
+import type { RequestItem, RequestStatus } from "../services/requestStorage";
+
+const statusStyles = {
+  received: { label: "접수", color: "text-[#64748b]", bg: "bg-[#f1f5f9]" },
+  processing: { label: "처리중", color: "text-[#F39945]", bg: "bg-[#fff5ec]" },
+  done: { label: "완료", color: "text-[#1D50A2]", bg: "bg-[#edf4ff]" },
+  rejected: { label: "반려", color: "text-[#F39945]", bg: "bg-[#fff5ec]" }
+};
+
+type RequestBucket = keyof typeof statusStyles;
 
 function goRequestStatus() {
   const params = new URLSearchParams(window.location.search);
@@ -13,7 +19,88 @@ function goRequestStatus() {
   window.location.href = `/request-status${user ? `?user=${encodeURIComponent(user)}` : ""}`;
 }
 
-export function RequestStatusSection() {
+function normalize(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function requestBucket(status: RequestStatus | string | undefined): RequestBucket {
+  const value = String(status ?? "");
+  if (value.includes("반려") || value.toLowerCase().includes("reject")) return "rejected";
+  if (value.includes("완료") || value.toLowerCase().includes("done") || value.toLowerCase().includes("complete")) return "done";
+  if (value.includes("확인") || value.includes("처리") || value.toLowerCase().includes("process")) return "processing";
+  return "received";
+}
+
+function requesterMatches(item: RequestItem, userName: string) {
+  return normalize(item.requester) === normalize(userName);
+}
+
+function assignedMatches(item: RequestItem, userName: string) {
+  const owners = item.assignedOwners ?? [];
+  return owners.some((owner) => normalize(owner) === normalize(userName));
+}
+
+function isVipsAssigneeUser(userName: string) {
+  return ["sally", "gavin", "vincent"].includes(normalize(userName));
+}
+
+export function RequestStatusSection({
+  onDelayedTaskCountChange
+}: {
+  onDelayedTaskCountChange?: (count: number) => void;
+}) {
+  const { selectedUser } = useSelectedUser();
+  const [requests, setRequests] = useState<RequestItem[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch("/api/requests", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { items?: RequestItem[] } | null) => {
+        if (!isMounted) return;
+        setRequests(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {
+        if (isMounted) setRequests([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const visibleRequests = useMemo(() => {
+    if (isVipsAssigneeUser(selectedUser.name)) {
+      return requests.filter((item) => assignedMatches(item, selectedUser.name));
+    }
+
+    return requests.filter((item) => requesterMatches(item, selectedUser.name));
+  }, [requests, selectedUser.name]);
+
+  const counts = useMemo(() => {
+    const next: Record<RequestBucket, number> = {
+      received: 0,
+      processing: 0,
+      done: 0,
+      rejected: 0
+    };
+    visibleRequests.forEach((item) => {
+      next[requestBucket(item.status)] += 1;
+    });
+    return next;
+  }, [visibleRequests]);
+
+  useEffect(() => {
+    onDelayedTaskCountChange?.(counts.rejected > 0 ? 1 : 0);
+  }, [counts.rejected, onDelayedTaskCountChange]);
+
+  const statusItems = [
+    { ...statusStyles.received, value: counts.received },
+    { ...statusStyles.processing, value: counts.processing },
+    { ...statusStyles.done, value: counts.done },
+    { ...statusStyles.rejected, value: counts.rejected }
+  ];
+
   return (
     <button
       type="button"
@@ -44,4 +131,3 @@ export function RequestStatusSection() {
     </button>
   );
 }
-

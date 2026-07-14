@@ -10,13 +10,13 @@ function getMonthEndHref() {
   return `/month-end${user ? `?user=${encodeURIComponent(user)}` : ""}`;
 }
 
-export function HeroSection({ userName }: { userName: string }) {
+export function HeroSection({ userName, taskCount }: { userName: string; taskCount: number }) {
   return (
     <section className="relative min-h-[206px] min-w-0 overflow-hidden rounded-[20px] border border-[#cbd5e1] bg-[linear-gradient(135deg,#fff7f3_0%,#ffffff_52%,#edf4ff_100%)] shadow-[0_12px_28px_rgba(15,23,42,0.085)] ring-1 ring-[#dbe4f0]">
       <div className="relative z-20 flex min-h-[206px] min-w-0 flex-col justify-center px-8 py-7 min-[1080px]:pr-[330px]">
         <p className="truncate text-[18px] font-[900] text-[#111827]">{userName}님 👋</p>
         <h1 className="mt-1 text-[30px] font-[950] leading-[1.08] tracking-[-0.035em] text-[#111827] min-[1280px]:text-[38px]">
-          오늘 처리할 업무 <span className="text-[#F39945]">8건</span>
+          오늘 처리할 업무 <span className="text-[#F39945]">{taskCount.toLocaleString("ko-KR")}건</span>
         </h1>
         <p className="mt-2 text-[13px] font-[750] text-[#64748b]">월마감·수금·반려 이슈를 먼저 확인하세요.</p>
       </div>

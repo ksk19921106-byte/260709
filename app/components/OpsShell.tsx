@@ -75,9 +75,12 @@ function TestUserSwitcher({
         </div>
         <ChevronDown size={15} className="text-white/80" />
       </div>
-      <div className="mt-2.5">
-        <span className="mb-2 block text-[10px] font-[850] uppercase tracking-[0.08em] text-white/70/90">테스트 로그인</span>
-        <div className="grid gap-1.5">
+      <details className="group mt-2.5">
+        <summary className="flex h-8 cursor-pointer list-none items-center justify-between rounded-xl bg-white/10 px-3 text-[11px] font-[900] text-white/80 transition hover:bg-white/18">
+          <span>테스트 계정 전환</span>
+          <ChevronRight size={14} className="transition group-open:rotate-90" />
+        </summary>
+        <div className="mt-2 grid max-h-[280px] gap-1.5 overflow-auto pr-1">
           {users.map((user) => {
             const active = selectedUser.name === user.name;
             const switchHref = `${pathname}?user=${encodeURIComponent(user.name)}`;
@@ -98,7 +101,7 @@ function TestUserSwitcher({
             );
           })}
         </div>
-      </div>
+      </details>
     </div>
   );
 }
