@@ -115,6 +115,15 @@ const helpCategories: HelpCategory[] = [
 
 const quickChips = ["출고 안돼요", "입금 들어왔는데", "계산서 왜 안 끊겨요", "수금매칭", "COC", "선출고", "Deduct", "여신 막혔어요", "RMA"];
 
+const primaryCategoryIds = ["shipping", "tax", "collection", "month-end", "contract", "faq"];
+
+const situationCards = [
+  { title: "출고가 막혔어요", query: "출고 안돼요", hint: "여신, 선출고, 퀵배송부터 확인" },
+  { title: "입금은 됐는데 다음이 막혀요", query: "입금 들어왔는데", hint: "입금확인, 수금매칭, AR 확인" },
+  { title: "계산서 처리가 헷갈려요", query: "계산서 왜 안 끊겨요", hint: "발행 기준, 수정, 매칭 확인" },
+  { title: "월마감에 계속 남아요", query: "월마감", hint: "출고/계산서/수금 흐름 확인" }
+];
+
 const situationIntents = [
   { words: ["출고 안", "출고안", "출고가 안", "배송 안", "출고 막"], boost: ["출고", "선출고", "여신", "승인", "퀵배송"] },
   { words: ["입금", "돈 들어", "수금", "부분입금", "미수"], boost: ["입금확인", "수금매칭", "AR", "부분입금", "수금"] },
@@ -350,7 +359,7 @@ export default function GuidePage() {
   const [selectedArticle, setSelectedArticle] = useState<WikiArticle>(initialArticle);
 
   const results = useMemo(() => searchArticles(query, selectedCategory), [query, selectedCategory]);
-  const visibleResults = results.length ? results : wikiArticles.slice(0, 8);
+  const visibleResults = (results.length ? results : wikiArticles.slice(0, 8)).slice(0, query.trim() ? 8 : 6);
 
   const handleCategory = (categoryId: string) => {
     setSelectedCategory(categoryId);
@@ -370,7 +379,20 @@ export default function GuidePage() {
           <p className="text-[11px] font-[950] uppercase tracking-[0.08em] text-[#1D50A2]">SEARCH FIRST</p>
           <h2 className="mt-1 text-[28px] font-[950] tracking-[-0.03em] text-[#111827]">무엇이 막혔나요?</h2>
           <p className="mt-1 text-[13px] font-[750] leading-5 text-[#64748b]">기능 이름을 몰라도 상황을 입력하면 바로 해결 문서를 찾아드립니다.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {situationCards.map((card) => (
+              <button
+                key={card.title}
+                type="button"
+                onClick={() => setQuery(card.query)}
+                className="rounded-[18px] border border-[#e5edf7] bg-[#fbfcff] px-4 py-3 text-left transition hover:border-[#1D50A2] hover:bg-[#f8fbff]"
+              >
+                <p className="text-[13px] font-[950] text-[#111827]">{card.title}</p>
+                <p className="mt-1 truncate text-[11px] font-[750] text-[#64748b]">{card.hint}</p>
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex max-h-[72px] flex-wrap gap-2 overflow-hidden">
             {quickChips.map((chip) => (
               <button
                 key={chip}
@@ -396,8 +418,8 @@ export default function GuidePage() {
           </div>
         </div>
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          {helpCategories.map((category) => {
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          {helpCategories.filter((category) => primaryCategoryIds.includes(category.id)).map((category) => {
             const Icon = category.icon;
             const active = selectedCategory === category.id;
             return (
@@ -426,7 +448,7 @@ export default function GuidePage() {
               </div>
               <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-[12px] font-[950] text-[#1D50A2]">{visibleResults.length}</span>
             </div>
-            <div className="mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-[560px] space-y-2 overflow-y-auto pr-1">
               {visibleResults.map((article) => {
                 const active = selectedArticle.id === article.id;
                 const category = categoryOf(article);

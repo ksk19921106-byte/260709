@@ -78,7 +78,7 @@ export async function GET(request: Request) {
     );
     return NextResponse.json({
       users,
-      effectiveUsers: { ...users, ...tradeBlockedUsers, ...monthEndBlockedUsers },
+      effectiveUsers: { ...tradeBlockedUsers, ...monthEndBlockedUsers, ...users },
       tradeClose: tradeCloseDashboard
     });
   }
@@ -87,14 +87,16 @@ export async function GET(request: Request) {
   const monthEndUserIssues = monthEndIssues.filter((issue) => issue.iSales === user || issue.fSales === user);
   const tradeBlocked = tradeClose.unresolvedCount > 0;
   const monthEndBlocked = monthEndUserIssues.length > 0;
-  const manualBlocked = users[user] === "BLOCK";
-  const status = manualBlocked || tradeBlocked || monthEndBlocked ? "BLOCK" : "OK";
+  const hasManualStatus = Object.prototype.hasOwnProperty.call(users, user);
+  const manualStatus = users[user];
+  const autoBlocked = tradeBlocked || monthEndBlocked;
+  const status: MonthEndGateStatus = hasManualStatus ? manualStatus : autoBlocked ? "BLOCK" : "OK";
 
   return NextResponse.json({
     user,
     status,
     isBlocked: status === "BLOCK",
-    blockedReason: tradeBlocked || monthEndBlocked ? "tradeClose" : manualBlocked ? "manual" : undefined,
+    blockedReason: status === "BLOCK" ? (hasManualStatus && manualStatus === "BLOCK" ? "manual" : "tradeClose") : undefined,
     unresolvedCount: tradeClose.unresolvedCount + monthEndUserIssues.length,
     healthScore: tradeClose.healthScore
   });

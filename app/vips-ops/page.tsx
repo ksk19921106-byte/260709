@@ -87,6 +87,7 @@ type GatekeeperRow = {
   team: string;
   issueCount: number;
   issueAmount: number;
+  hasManualStatus: boolean;
   manualStatus: MonthEndGateStatus;
   effectiveStatus: MonthEndGateStatus;
 };
@@ -1245,7 +1246,13 @@ function GatekeeperControlPanel({
                     row.effectiveStatus === "BLOCK" ? "bg-[#fff5ec] text-[#F39945]" : "bg-[#edf4ff] text-[#1D50A2]"
                   }`}
                 >
-                  {row.effectiveStatus === "BLOCK" ? (row.issueCount > 0 ? "자동차단" : "수동차단") : "정상"}
+                  {row.effectiveStatus === "BLOCK"
+                    ? row.hasManualStatus && row.manualStatus === "BLOCK"
+                      ? "수동차단"
+                      : "자동차단"
+                    : row.hasManualStatus && row.issueCount > 0
+                      ? "수동해제"
+                      : "정상"}
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -1258,8 +1265,8 @@ function GatekeeperControlPanel({
                   </button>
                   <button
                     type="button"
-                    disabled={savingUser === row.name || row.issueCount > 0}
-                    title={row.issueCount > 0 ? "월마감 이슈가 남아 있어 차단해제할 수 없습니다." : "수동 차단을 해제합니다."}
+                    disabled={savingUser === row.name}
+                    title={row.issueCount > 0 ? "이슈가 남아 있어도 이 Sales의 요청 진입을 수동 허용합니다." : "수동 차단을 해제합니다."}
                     onClick={() => handleUpdate(row.name, "OK")}
                     className="h-9 rounded-xl border border-[#dce6f3] bg-white px-3 text-[12px] font-[950] text-[#1D50A2] disabled:opacity-50"
                   >
@@ -1873,13 +1880,15 @@ export default function VipsOpsPage() {
 
     return Array.from(names).map((name) => {
       const userIssues = issuesForSales(closingIssues, name);
+      const hasManualStatus = Object.prototype.hasOwnProperty.call(blockedUsers, name);
       const manualStatus = blockedUsers[name] ?? "OK";
-      const effectiveStatus: MonthEndGateStatus = manualStatus === "BLOCK" || userIssues.length > 0 ? "BLOCK" : "OK";
+      const effectiveStatus: MonthEndGateStatus = hasManualStatus ? manualStatus : userIssues.length > 0 ? "BLOCK" : "OK";
       return {
         name,
         team: salesTeam(name),
         issueCount: userIssues.length,
         issueAmount: userIssues.reduce((sum, issue) => sum + issue.amount, 0),
+        hasManualStatus,
         manualStatus,
         effectiveStatus
       };
