@@ -10,7 +10,7 @@ import {
   TrendingUp,
   WalletCards
 } from "lucide-react";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 
 const operatingSummary = [
   { label: "월마감 확인 건", value: "18건", note: "전월 대비 +4", icon: FileCheck2 },

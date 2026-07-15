@@ -18,7 +18,7 @@ import {
   WalletCards,
   type LucideIcon
 } from "lucide-react";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { wikiArticles, wikiCategoryLabels, type WikiArticle } from "../services/wikiArticles";
 
 type HelpCategory = {

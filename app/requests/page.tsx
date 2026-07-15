@@ -17,7 +17,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { BlockedGateDialog } from "../components/BlockedGateDialog";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { useSelectedUser } from "../hooks/useSelectedUser";
 import { checkMonthEndGate } from "../services/monthEndGate";
 import { REQUEST_FORM_CONFIGS, type RequestKind } from "../services/formValidation";

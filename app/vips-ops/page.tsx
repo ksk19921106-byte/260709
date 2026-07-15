@@ -17,7 +17,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { AccessDenied } from "../components/AccessDenied";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import { REQUEST_FORM_CONFIGS } from "../services/formValidation";
 import { fetchRequests, type RequestItem, type RequestStatus } from "../services/requestStorage";

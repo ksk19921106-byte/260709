@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ModulePage } from "../../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { REQUEST_FORM_CONFIGS, type RequestKind } from "../../services/formValidation";
 import { RequestKindForm } from "./RequestKindForm";
 

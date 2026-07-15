@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { RequestDetailModal } from "../components/RequestDetailModal";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import { fetchRequests, type RequestItem } from "../services/requestStorage";
 import { REQUEST_FORM_CONFIGS, type RequestKind } from "../services/formValidation";

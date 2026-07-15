@@ -1,4 +1,4 @@
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { MonthEndPasteClient } from "./MonthEndPasteClient";
 
 export default function MonthEndPage() {

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowRight, BookOpenCheck, ChevronDown, HelpCircle, Search, ShieldAlert } from "lucide-react";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 
 const faqItems = [
   {
