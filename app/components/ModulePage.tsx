@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+﻿import type { ReactNode } from "react";
 import { OpsShell } from "./OpsShell";
 
 export function ModulePage({
@@ -33,3 +33,4 @@ export function ModulePage({
     </OpsShell>
   );
 }
+
