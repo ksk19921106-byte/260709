@@ -145,19 +145,7 @@ const filterOptions: Array<{ key: TableFilter; label: string }> = [
 ];
 
 const collectionTeamOptions = ["S1", "S2", "S3", "B2D"];
-const defaultSalesRoster = [
-  "Harvey",
-  "Lauren",
-  "Riley",
-  "Jake",
-  "Terry",
-  "Chris",
-  "Robin",
-  "William_S2",
-  "Jenny",
-  "Winnie",
-  "Max"
-];
+const defaultSalesRoster = TEST_USERS.filter((user) => user.role === "SALES").map((user) => user.salesName);
 
 const priorityStyle = {
   high: "bg-[#fff5ec] text-[#b85f18] border-[#f7c999]",
@@ -620,7 +608,7 @@ function enrichArRecordsWithReceivables(records: DemoArRecord[], receivables: Re
 
   return records.map((record) => {
     const existingSales = normalizeSalesName(record.sales);
-    if (existingSales) return { ...record, sales: existingSales, team: normalizeTeamName(record.team || existingSales) };
+    if (existingSales && existingSales !== "미매칭") return { ...record, sales: existingSales, team: normalizeTeamName(record.team || existingSales) };
 
     const key = normalizeMatchText(record.company);
     const matched = candidates.find((candidate) => candidate.key === key)
@@ -848,6 +836,10 @@ export default function CollectionsPage() {
     [assignedSales, sourceReceivableRecords]
   );
   const visibleRecords = useMemo(() => filterReceivablesByUser(recordsWithAssignments, selectedUser), [recordsWithAssignments, selectedUser]);
+  const enrichedArRecords = useMemo(
+    () => enrichArRecordsWithReceivables(arRecords, recordsWithAssignments),
+    [arRecords, recordsWithAssignments]
+  );
   const salesFilterOptions = useMemo(() => {
     const source = isAdmin ? recordsWithAssignments : visibleRecords;
     const names = new Set<string>();
@@ -873,13 +865,13 @@ export default function CollectionsPage() {
       const name = normalizeSalesName(order.sales);
       if (name && name !== "미매칭") names.add(name);
     }
-    for (const record of arRecords) {
+    for (const record of enrichedArRecords) {
       const name = normalizeSalesName(record.sales);
       if (name && name !== "미매칭") names.add(name);
     }
-    ["Harvey", "Lauren", "Riley", "Jake", "Terry", "Chris", "Robin"].forEach((name) => names.add(name));
+    defaultSalesRoster.forEach((name) => names.add(name));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [arRecords, matchingDemo.orders, salesFilterOptions]);
+  }, [enrichedArRecords, matchingDemo.orders, salesFilterOptions]);
   const scopedRecords = useMemo(
     () =>
       visibleRecords.filter((record) => {
@@ -926,7 +918,7 @@ export default function CollectionsPage() {
     [matchingDemo]
   );
   const scopedArRecords = useMemo(() => {
-    return arRecords.filter((record) => {
+    return enrichedArRecords.filter((record) => {
       const recordSales = normalizeSalesName(record.sales);
       const recordMonth = normalizeCollectionMonth(record.collectionMonth ?? record.dueDate);
       const matchMonth = monthFilter === "all" || !recordMonth || recordMonth === monthFilter;
@@ -935,7 +927,7 @@ export default function CollectionsPage() {
       const matchUser = isAdmin || recordSales === normalizeSalesName(selectedUser.salesName);
       return matchMonth && matchTeam && matchSales && matchUser;
     });
-  }, [arRecords, isAdmin, monthFilter, salesFilter, selectedUser.salesName, teamFilter]);
+  }, [enrichedArRecords, isAdmin, monthFilter, salesFilter, selectedUser.salesName, teamFilter]);
   const arSummary = useMemo(() => {
     const totalAr = scopedArRecords.reduce((sum, record) => sum + record.ar, 0);
     const over30 = scopedArRecords.filter((record) => record.overdueDays >= 30);

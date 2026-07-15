@@ -155,22 +155,14 @@ const teamMetrics = [
   }
 ];
 
-const salesTeamMap: Record<string, string> = {
-  Jake: "S1",
-  Terry: "S1",
-  Harvey: "B2D",
-  Lauren: "B2D",
-  Riley: "B2D",
-  Chris: "S3",
-  Robin: "S3"
-};
+const salesTeamMap: Record<string, string> = Object.fromEntries(
+  TEST_USERS.filter((user) => user.role === "SALES").map((user) => [user.salesName, user.team])
+);
 
-const teamRoster = [
-  { team: "S1", members: ["Jake", "Terry"] },
-  { team: "S2", members: [] },
-  { team: "S3", members: ["Chris", "Robin"] },
-  { team: "B2D", members: ["Harvey", "Lauren", "Riley"] }
-];
+const teamRoster = ["B2D", "S1", "S2", "S3"].map((team) => ({
+  team,
+  members: TEST_USERS.filter((user) => user.role === "SALES" && user.team === team).map((user) => user.salesName)
+}));
 
 const highValueThreshold = 10000000;
 
@@ -1251,7 +1243,7 @@ function GatekeeperControlPanel({
                   {row.effectiveStatus === "BLOCK"
                     ? row.hasManualStatus && row.manualStatus === "BLOCK"
                       ? "수동차단"
-                      : "자동차단"
+                      : "차단"
                     : row.hasManualStatus && row.issueCount > 0
                       ? "수동해제"
                       : "정상"}
@@ -1884,7 +1876,7 @@ export default function VipsOpsPage() {
       const userIssues = issuesForSales(closingIssues, name);
       const hasManualStatus = Object.prototype.hasOwnProperty.call(blockedUsers, name);
       const manualStatus = blockedUsers[name] ?? "OK";
-      const effectiveStatus: MonthEndGateStatus = hasManualStatus ? manualStatus : userIssues.length > 0 ? "BLOCK" : "OK";
+      const effectiveStatus: MonthEndGateStatus = hasManualStatus ? manualStatus : "OK";
       return {
         name,
         team: salesTeam(name),

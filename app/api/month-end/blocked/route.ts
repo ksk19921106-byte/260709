@@ -70,33 +70,24 @@ export async function GET(request: Request) {
   const monthEndIssues = (await readMonthEndSnapshotIssues()).filter((issue) => issue.status === "open" && visibleMonthEndIssueTypes.has(String(issue.issueType)));
 
   if (!user) {
-    const tradeBlockedUsers = Object.fromEntries(
-      tradeCloseDashboard.users.filter((item) => item.unresolvedCount > 0).map((item) => [item.salesOwner, "BLOCK" as MonthEndGateStatus])
-    );
-    const monthEndBlockedUsers = Object.fromEntries(
-      Array.from(new Set(monthEndIssues.flatMap((issue) => [issue.iSales, issue.fSales]).filter(Boolean) as string[])).map((salesName) => [salesName, "BLOCK" as MonthEndGateStatus])
-    );
     return NextResponse.json({
       users,
-      effectiveUsers: { ...tradeBlockedUsers, ...monthEndBlockedUsers, ...users },
+      effectiveUsers: users,
       tradeClose: tradeCloseDashboard
     });
   }
 
   const tradeClose = getTradeCloseSummaryForUser(tradeCloseDashboard, user);
   const monthEndUserIssues = monthEndIssues.filter((issue) => issue.iSales === user || issue.fSales === user);
-  const tradeBlocked = tradeClose.unresolvedCount > 0;
-  const monthEndBlocked = monthEndUserIssues.length > 0;
   const hasManualStatus = Object.prototype.hasOwnProperty.call(users, user);
   const manualStatus = users[user];
-  const autoBlocked = tradeBlocked || monthEndBlocked;
-  const status: MonthEndGateStatus = hasManualStatus ? manualStatus : autoBlocked ? "BLOCK" : "OK";
+  const status: MonthEndGateStatus = hasManualStatus ? manualStatus : "OK";
 
   return NextResponse.json({
     user,
     status,
     isBlocked: status === "BLOCK",
-    blockedReason: status === "BLOCK" ? (hasManualStatus && manualStatus === "BLOCK" ? "manual" : "tradeClose") : undefined,
+    blockedReason: status === "BLOCK" ? "manual" : undefined,
     unresolvedCount: tradeClose.unresolvedCount + monthEndUserIssues.length,
     healthScore: tradeClose.healthScore
   });

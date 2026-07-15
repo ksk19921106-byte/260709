@@ -5,7 +5,7 @@ import { BarChart3, CheckCircle2, FileText, RefreshCw, Save, Search, ShieldCheck
 import { AccessDenied } from "../components/AccessDenied";
 import { OpsShell } from "../components/OpsShell";
 import { RequestDetailModal } from "../components/RequestDetailModal";
-import { useSelectedUser } from "../hooks/useSelectedUser";
+import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import { fetchBlockedUsers, updateBlockedUser, type BlockedUserMap, type MonthEndGateStatus } from "../services/monthEndGate";
 import { fetchRequests, updateRequest, type RequestItem, type RequestStatus } from "../services/requestStorage";
 
@@ -25,18 +25,9 @@ const blockStatusStyles: Record<MonthEndGateStatus, string> = {
 
 type DraftMap = Record<string, { status: RequestStatus; result: string }>;
 
-const defaultBlockedUsers: BlockedUserMap = {
-  Sally: "OK",
-  Vincent: "OK",
-  Gavin: "OK",
-  Harvey: "OK",
-  Lauren: "OK",
-  Riley: "OK",
-  Jake: "OK",
-  Terry: "OK",
-  Chris: "OK",
-  Robin: "OK"
-};
+const defaultBlockedUsers: BlockedUserMap = Object.fromEntries(
+  TEST_USERS.filter((user) => user.role === "SALES").map((user) => [user.salesName, "OK" as MonthEndGateStatus])
+);
 
 export default function AdminPage() {
   const { selectedUser } = useSelectedUser();
