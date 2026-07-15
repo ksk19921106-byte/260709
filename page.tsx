@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Banknote, CheckCircle2, CircleDollarSign, Search, ShieldCheck, UserRound } from "lucide-react";
-import { ModulePage } from "../components/ModulePage";
+import { ModulePage } from "@/app/components/ModulePage";
 import { TEST_USERS, useSelectedUser } from "../hooks/useSelectedUser";
 import {
   buildCollectionIssues,
@@ -145,19 +145,7 @@ const filterOptions: Array<{ key: TableFilter; label: string }> = [
 ];
 
 const collectionTeamOptions = ["S1", "S2", "S3", "B2D"];
-const defaultSalesRoster = [
-  "Harvey",
-  "Lauren",
-  "Riley",
-  "Jake",
-  "Terry",
-  "Chris",
-  "Robin",
-  "William_S2",
-  "Jenny",
-  "Winnie",
-  "Max"
-];
+const defaultSalesRoster = TEST_USERS.filter((user) => user.role === "SALES").map((user) => user.salesName);
 
 const priorityStyle = {
   high: "bg-[#fff5ec] text-[#b85f18] border-[#f7c999]",
@@ -881,7 +869,7 @@ export default function CollectionsPage() {
       const name = normalizeSalesName(record.sales);
       if (name && name !== "미매칭") names.add(name);
     }
-    ["Harvey", "Lauren", "Riley", "Jake", "Terry", "Chris", "Robin"].forEach((name) => names.add(name));
+    defaultSalesRoster.forEach((name) => names.add(name));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [enrichedArRecords, matchingDemo.orders, salesFilterOptions]);
   const scopedRecords = useMemo(
