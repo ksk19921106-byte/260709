@@ -103,10 +103,60 @@ export const SALES_ALIAS_MAP: Record<string, string> = {
 
 export function normalizeSalesName(value?: string | null) {
   if (!value) return "";
-  const key = String(value).trim();
+  const key = String(value).split("/").map((part) => part.trim()).filter(Boolean).pop() || String(value).trim();
   const upperKey = key.toUpperCase();
   const canonicalKey = Object.keys(SALES_ALIAS_MAP).find((alias) => alias.toUpperCase() === upperKey);
   return SALES_ALIAS_MAP[key] || (canonicalKey ? SALES_ALIAS_MAP[canonicalKey] : key);
+}
+
+const RECEIVABLE_SALES_FIELD_KEYS = [
+  "sales",
+  "Sales",
+  "SALES",
+  "salesName",
+  "salesCode",
+  "owner",
+  "manager",
+  "rep",
+  "담당자",
+  "담당",
+  "담당 Sales",
+  "담당Sales",
+  "담당자명",
+  "영업담당",
+  "영업",
+  "담당 영업"
+];
+
+const RECEIVABLE_FSALES_FIELD_KEYS = [
+  "fSales",
+  "FSales",
+  "F Sales",
+  "FS",
+  "fsales",
+  "상위담당",
+  "팀장",
+  "FSales / ISales",
+  "FS / IS",
+  "FS/IS"
+];
+
+export function readReceivableTextField(record: object | null | undefined, keys: string[]) {
+  if (!record) return "";
+  const source = record as Record<string, unknown>;
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
+
+export function extractReceivableAssignee(record: object | null | undefined) {
+  const rawSales = readReceivableTextField(record, RECEIVABLE_SALES_FIELD_KEYS);
+  const rawFSales = readReceivableTextField(record, RECEIVABLE_FSALES_FIELD_KEYS);
+  const sales = normalizeSalesName(rawSales) || rawSales;
+  const fSales = normalizeSalesName(rawFSales) || rawFSales;
+  return { rawSales, rawFSales, sales, fSales };
 }
 
 export function normalizeTeamName(value?: string | null) {

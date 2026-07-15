@@ -10,6 +10,7 @@ import {
   buildCollectionSummary,
   buildSalesStats,
   buildTeamStats,
+  extractReceivableAssignee,
   filterReceivablesByUser,
   formatKrwShort,
   normalizeSalesName,
@@ -101,6 +102,7 @@ type MatchingDemoState = {
 };
 
 type LiveReceivableRecord = {
+  [key: string]: unknown;
   id?: string;
   team?: string;
   sales?: string;
@@ -199,6 +201,10 @@ function formatMonthLabel(month: string) {
   const match = String(month || "").match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
   if (!match) return month;
   return `${match[1]}년 ${Number(match[2])}월`;
+}
+
+function currentCollectionMonth() {
+  return new Date().toISOString().slice(0, 7);
 }
 
 function normalizeCollectionStatus(value: string): "완료" | "부분수금" | "미수" {
@@ -634,6 +640,7 @@ function enrichArRecordsWithReceivables(records: DemoArRecord[], receivables: Re
 function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: number): ReceivableRecord | null {
   const name = String(record.name ?? record.company ?? "").trim();
   if (!name) return null;
+  const assignee = extractReceivableAssignee(record);
 
   const expected = Number(record.expected ?? record.expectedAmount ?? 0);
   const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
@@ -649,9 +656,9 @@ function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: numb
 
   return {
     id: String(record.id ?? `live-${normalizeMatchText(name) || "row"}-${index}`),
-    team: normalizeTeamName(record.team),
-    fSales: record.fSales ? normalizeSalesName(record.fSales) : undefined,
-    sales: normalizeSalesName(record.sales) || String(record.sales ?? "").trim(),
+    team: normalizeTeamName(record.team ?? assignee.sales),
+    fSales: assignee.fSales || undefined,
+    sales: assignee.sales,
     name,
     expected,
     paid,
@@ -809,6 +816,7 @@ export default function CollectionsPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TableFilter>("all");
   const [monthFilter, setMonthFilter] = useState("all");
+  const [uploadMonth, setUploadMonth] = useState(currentCollectionMonth());
   const [teamFilter, setTeamFilter] = useState("all");
   const [salesFilter, setSalesFilter] = useState("all");
   const [actionStatuses, setActionStatuses] = useState<Record<string, CollectionActionStatus>>({});
@@ -1038,7 +1046,12 @@ export default function CollectionsPage() {
     void fetch("/api/receivables-status")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        const records = payload?.snapshot?.records;
+        const historyRecords = Array.isArray(payload?.history)
+          ? payload.history.flatMap((snapshot: { collectionMonth?: string; records?: ReceivableRecord[] }) =>
+              Array.isArray(snapshot.records) ? snapshot.records.map((record) => ({ ...record, collectionMonth: record.collectionMonth || snapshot.collectionMonth })) : []
+            )
+          : [];
+        const records = historyRecords.length > 0 ? historyRecords : payload?.snapshot?.records;
         if (!Array.isArray(records)) return;
         setUploadedReceivableRecords(records as ReceivableRecord[]);
         setStatusFileMessage(`공용 저장소에서 전체 수금현황 ${records.length}건을 불러왔습니다.`);
@@ -1094,7 +1107,12 @@ export default function CollectionsPage() {
     void fetch("/api/receivables-aging")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        const records = payload?.snapshot?.records;
+        const historyRecords = Array.isArray(payload?.history)
+          ? payload.history.flatMap((snapshot: { collectionMonth?: string; records?: DemoArRecord[] }) =>
+              Array.isArray(snapshot.records) ? snapshot.records.map((record) => ({ ...record, collectionMonth: record.collectionMonth || snapshot.collectionMonth })) : []
+            )
+          : [];
+        const records = historyRecords.length > 0 ? historyRecords : payload?.snapshot?.records;
         if (!Array.isArray(records)) return;
         setArRecords(records as DemoArRecord[]);
         setArFileMessage(`공용 저장소에서 미수금 Aging ${records.length}건을 불러왔습니다.`);
@@ -1344,9 +1362,10 @@ export default function CollectionsPage() {
   };
 
   const saveReceivableStatusRecords = async (records: ReceivableRecord[], sourceType: "paste" | "file") => {
-    setUploadedReceivableRecords(records);
+    const scopedRecords = records.map((record) => ({ ...record, collectionMonth: uploadMonth }));
+    setUploadedReceivableRecords(scopedRecords);
     try {
-      window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(records));
+      window.localStorage.setItem(RECEIVABLE_STATUS_KEY, JSON.stringify(scopedRecords));
     } catch {
       // Shared save is attempted below; current screen still updates.
     }
@@ -1356,8 +1375,9 @@ export default function CollectionsPage() {
       id: `receivables-status-${uploadedAt}`,
       uploadedAt,
       uploadedBy: selectedUser.name,
+      collectionMonth: uploadMonth,
       sourceType,
-      records
+      records: scopedRecords
     };
 
     try {
@@ -1367,9 +1387,10 @@ export default function CollectionsPage() {
         body: JSON.stringify(snapshot)
       });
       if (!response.ok) throw new Error("shared save failed");
-      setStatusFileMessage(`전체 수금현황 ${records.length}건 인식 · 구글 시트 저장 완료`);
+      setMonthFilter(uploadMonth);
+      setStatusFileMessage(`${formatMonthLabel(uploadMonth)} 전체 수금현황 ${scopedRecords.length}건 인식 · 구글 시트 저장 완료`);
     } catch {
-      setStatusFileMessage(`전체 수금현황 ${records.length}건 인식 · 브라우저 저장만 완료`);
+      setStatusFileMessage(`${formatMonthLabel(uploadMonth)} 전체 수금현황 ${scopedRecords.length}건 인식 · 브라우저 저장만 완료`);
     }
   };
 
@@ -1408,7 +1429,7 @@ export default function CollectionsPage() {
     setIsReadingFile(true);
     try {
       const rows = await parseSpreadsheetFile(file);
-      const parsed = enrichArRecordsWithReceivables(parseArRows(rows), recordsWithAssignments);
+      const parsed = enrichArRecordsWithReceivables(parseArRows(rows), recordsWithAssignments).map((record) => ({ ...record, collectionMonth: uploadMonth }));
       setArRecords(parsed);
       window.localStorage.setItem(AR_DEMO_KEY, JSON.stringify(parsed));
       const uploadedAt = new Date().toISOString();
@@ -1416,6 +1437,7 @@ export default function CollectionsPage() {
         id: `receivables-aging-${uploadedAt}`,
         uploadedAt,
         uploadedBy: selectedUser.name,
+        collectionMonth: uploadMonth,
         fileName: file.name,
         records: parsed
       };
@@ -1428,11 +1450,12 @@ export default function CollectionsPage() {
           body: JSON.stringify(snapshot)
         });
         if (!response.ok) throw new Error("shared save failed");
-        saveMessage = "구글 시트 저장 완료";
+        saveMessage = `${formatMonthLabel(uploadMonth)} 구글 시트 저장 완료`;
       } catch {
         saveMessage = "브라우저 저장만 완료 · 공용 저장 실패";
       }
 
+      setMonthFilter(uploadMonth);
       setArFileMessage(`${file.name} · AR ${parsed.length}건 · ${formatKrwShort(parsed.reduce((sum, record) => sum + record.ar, 0))} 인식 · ${saveMessage}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "AR 파일을 읽지 못했습니다.";
@@ -1633,6 +1656,18 @@ export default function CollectionsPage() {
             </div>
             {isAdmin ? (
               <div className="min-w-[320px] rounded-[16px] border border-dashed border-[#cfe0f4] bg-[#fbfdff] p-3">
+                <label className="mb-3 block">
+                  <span className="block text-[11px] font-[950] text-[#64748b]">업로드 기준월</span>
+                  <select
+                    value={uploadMonth}
+                    onChange={(event) => setUploadMonth(event.target.value)}
+                    className="mt-1 h-9 w-full rounded-[12px] border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+                  >
+                    {Array.from(new Set([currentCollectionMonth(), "2026-07", "2026-06", ...monthFilterOptions])).sort((a, b) => b.localeCompare(a)).map((month) => (
+                      <option key={month} value={month}>{formatMonthLabel(month)}</option>
+                    ))}
+                  </select>
+                </label>
                 <input
                   type="file"
                   accept=".xls,.xlsx,.csv,.tsv,.txt"

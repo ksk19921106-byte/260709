@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Banknote, CreditCard, WalletCards, X } from "lucide-react";
 import { useSelectedUser } from "../hooks/useSelectedUser";
-import { buildCollectionIssues, buildCollectionSummary, filterReceivablesByUser, formatKrwShort, normalizeSalesName, normalizeTeamName, type ReceivableRecord } from "../services/receivables";
+import { buildCollectionIssues, buildCollectionSummary, extractReceivableAssignee, filterReceivablesByUser, formatKrwShort, normalizeSalesName, normalizeTeamName, type ReceivableRecord } from "../services/receivables";
 
 const ACTION_STATUS_KEY = "icbanq.ops.collectionActionStatus";
 
@@ -28,6 +28,7 @@ export type HomeCollectionTask = {
 };
 
 type LiveReceivableRecord = {
+  [key: string]: unknown;
   id?: string;
   team?: string;
   sales?: string;
@@ -109,6 +110,7 @@ function normalizeAgingBucket(value: unknown, overdueDays: number) {
 function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: number): ReceivableRecord | null {
   const name = String(record.name ?? record.company ?? "").trim();
   if (!name) return null;
+  const assignee = extractReceivableAssignee(record);
   const expected = Number(record.expected ?? record.expectedAmount ?? 0);
   const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
   const explicitDiff = Number(record.diff ?? record.unpaidAmount ?? NaN);
@@ -123,9 +125,9 @@ function normalizeLiveReceivableRecord(record: LiveReceivableRecord, index: numb
 
   return {
     id: String(record.id ?? `home-live-${index}`),
-    team: normalizeTeamName(record.team),
-    fSales: record.fSales ? normalizeSalesName(record.fSales) : undefined,
-    sales: normalizeSalesName(record.sales) || String(record.sales ?? "").trim(),
+    team: normalizeTeamName(record.team ?? assignee.sales),
+    fSales: assignee.fSales || undefined,
+    sales: assignee.sales,
     name,
     expected,
     paid,

@@ -25,6 +25,7 @@ type ReceivablesAgingSnapshot = {
   id: string;
   uploadedAt: string;
   uploadedBy: string;
+  collectionMonth?: string;
   fileName?: string;
   records: ReceivablesAgingRecord[];
 };
@@ -52,9 +53,9 @@ async function readSnapshotFile() {
 }
 
 function snapshotMonth(snapshot: ReceivablesAgingSnapshot) {
-  const explicit = snapshot.records.map((record) => record.collectionMonth || record.dueDate || "").find(Boolean);
+  const explicit = snapshot.collectionMonth || snapshot.records.map((record) => record.collectionMonth || record.dueDate || "").find(Boolean);
   const raw = String(explicit || snapshot.uploadedAt || "");
-  const match = raw.match(/(20\d{2})[-./년\s]*(0?[1-9]|1[0-2])/);
+  const match = raw.match(/(20\d{2})\D*(0?[1-9]|1[0-2])/);
   if (!match) return "";
   return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
 }

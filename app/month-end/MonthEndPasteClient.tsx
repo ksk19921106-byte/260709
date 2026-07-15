@@ -116,6 +116,11 @@ function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function monthUploadTimestamp(month: string) {
+  const safeMonth = normalizeMonthValue(month) || currentMonth();
+  return `${safeMonth}-01T00:00:00.000Z`;
+}
+
 function getElapsedDays(issue: ClosingIssue) {
   return Math.max(issue.shipmentDays ?? 0, issue.taxIssueDays ?? 0);
 }
@@ -226,6 +231,7 @@ export function MonthEndPasteClient() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [monthFilter, setMonthFilter] = useState("all");
+  const [uploadMonth, setUploadMonth] = useState(currentMonth());
   const [teamFilter, setTeamFilter] = useState("all");
   const [salesFilter, setSalesFilter] = useState("all");
   const [message, setMessage] = useState(isAdmin ? "ERP 월마감 데이터를 붙여넣고 데이터 인식하기를 눌러주세요." : "VIPS팀/Admin이 업로드한 최신 월마감 데이터를 불러오는 중입니다.");
@@ -360,14 +366,14 @@ export function MonthEndPasteClient() {
   );
 
   const recognizeData = (text = pasteText) => {
-    const uploadedAt = new Date().toISOString();
+    const uploadedAt = monthUploadTimestamp(uploadMonth);
     const result = parseClosingPaste(text, selectedUser.name, uploadedAt);
     setMessage(result.message);
     setMessageType(result.ok ? "success" : "error");
     setRecognizedIssues(result.ok ? result.issues : []);
     if (result.ok) {
       setFilter("all");
-      setMonthFilter("all");
+      setMonthFilter(uploadMonth);
       setTeamFilter("all");
       setSalesFilter("all");
       setQuery("");
@@ -381,21 +387,30 @@ export function MonthEndPasteClient() {
       return;
     }
 
-    const uploadedAt = recognizedIssues[0]?.uploadedAt ?? new Date().toISOString();
+    const uploadedAt = new Date().toISOString();
+    const monthIssueTimestamp = monthUploadTimestamp(uploadMonth);
+    const issuesForSelectedMonth = recognizedIssues.map((issue) => ({
+      ...issue,
+      id: issue.id.replace(issue.uploadedAt, monthIssueTimestamp),
+      uploadedAt: monthIssueTimestamp,
+      uploadedBy: selectedUser.name
+    }));
     const nextSnapshot: ClosingSnapshot = {
       id: `closing-${uploadedAt}`,
-      closingMonth: currentMonth(),
+      closingMonth: uploadMonth,
       uploadedAt,
       uploadedBy: selectedUser.name,
       rawText: pasteText,
-      issues: recognizedIssues
+      issues: issuesForSelectedMonth
     };
     writeSnapshot(nextSnapshot);
     setSnapshot(nextSnapshot);
 
     try {
       await writeServerSnapshot(nextSnapshot);
-      setMessage(`저장 완료: 확인 필요 이슈 ${recognizedIssues.length}건이 영업별로 배포되었습니다. 다른 계정에서는 권한에 맞게 조회됩니다.`);
+      setMonthFilter(uploadMonth);
+      setRecognizedIssues(issuesForSelectedMonth);
+      setMessage(`저장 완료: ${formatMonthLabel(uploadMonth)} 월마감 이슈 ${issuesForSelectedMonth.length}건이 영업별로 배포되었습니다.`);
       setMessageType("success");
     } catch {
       setMessage("브라우저에는 저장되었지만 서버 저장 파일에는 반영하지 못했습니다. 로컬 개발 서버가 켜져 있는지 확인해주세요.");
@@ -536,6 +551,18 @@ export function MonthEndPasteClient() {
               />
             </div>
             <div className="flex min-w-0 flex-col gap-2 rounded-[18px] border border-[#dce6f3] bg-white p-3">
+              <label className="block rounded-[14px] border border-[#e5eaf3] bg-[#f8fbff] px-3 py-2">
+                <span className="block text-[11px] font-[950] text-[#64748b]">업로드 기준월</span>
+                <select
+                  value={uploadMonth}
+                  onChange={(event) => setUploadMonth(event.target.value)}
+                  className="mt-1 h-9 w-full rounded-[12px] border border-[#dce6f3] bg-white px-3 text-[12px] font-[900] text-[#111827] outline-none"
+                >
+                  {Array.from(new Set([currentMonth(), "2026-07", "2026-06", ...monthFilterOptions])).sort((a, b) => b.localeCompare(a)).map((month) => (
+                    <option key={month} value={month}>{formatMonthLabel(month)}</option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 onClick={() => recognizeData()}

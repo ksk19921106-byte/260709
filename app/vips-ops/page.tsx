@@ -26,6 +26,7 @@ import {
   buildCollectionSummary,
   buildSalesStats,
   buildTeamStats,
+  extractReceivableAssignee,
   normalizeSalesName,
   normalizeTeamName,
   receivableRecords,
@@ -272,6 +273,7 @@ function normalizeLiveStatus(value: unknown, expected: number, paid: number, dif
 function normalizeLiveReceivableRecord(record: Record<string, unknown>, index: number): ReceivableRecord | null {
   const name = normalizeLooseText(record.name ?? record.company);
   if (!name) return null;
+  const assignee = extractReceivableAssignee(record);
   const expected = Number(record.expected ?? record.expectedAmount ?? 0);
   const explicitPaid = Number(record.paid ?? record.paidAmount ?? 0);
   const explicitDiff = Number(record.diff ?? record.unpaidAmount ?? NaN);
@@ -281,9 +283,9 @@ function normalizeLiveReceivableRecord(record: Record<string, unknown>, index: n
 
   return {
     id: normalizeLooseText(record.id) || `live-${index}`,
-    team: normalizeTeamName(normalizeLooseText(record.team)),
-    fSales: normalizeSalesName(normalizeLooseText(record.fSales)) || undefined,
-    sales: normalizeSalesName(normalizeLooseText(record.sales)) || normalizeLooseText(record.sales),
+    team: normalizeTeamName(normalizeLooseText(record.team) || assignee.sales),
+    fSales: assignee.fSales || undefined,
+    sales: assignee.sales,
     name,
     expected,
     paid,
