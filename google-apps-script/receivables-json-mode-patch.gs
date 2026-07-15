@@ -72,12 +72,14 @@ function opsNormalizeReceivableRecord_(record, index) {
   const status = opsNormalizeReceivableStatus_(record.status);
   const diff = explicitDiff !== null ? Math.max(0, explicitDiff) : opsInferDiff_(expected, paid, status);
   const normalizedPaid = paid || Math.max(0, expected - diff);
+  const sales = opsPickText_(record, ['sales', 'Sales', 'SALES', 'salesName', 'salesCode', 'owner', 'manager', 'rep', '담당자', '담당', '담당 Sales', '담당Sales', '담당자명', '영업담당', '영업', '담당 영업']);
+  const fSales = opsPickText_(record, ['fSales', 'FSales', 'F Sales', 'FS', 'fsales', '상위담당', '팀장', 'FSales / ISales', 'FS / IS', 'FS/IS']);
 
   return {
     id: record.id || ('receivable-live-' + (index + 1)),
     team: String(record.team || '').trim(),
-    sales: String(record.sales || '').trim(),
-    fSales: String(record.fSales || record.fsales || '').trim(),
+    sales,
+    fSales,
     name: String(record.name || record.company || '').trim(),
     company: String(record.name || record.company || '').trim(),
     expected,
@@ -97,6 +99,14 @@ function opsNormalizeReceivableRecord_(record, index) {
     agingBucket: String(record.agingBucket || '').trim(),
     erpUrl: String(record.erpUrl || record.trackingUrl || record.orderUrl || record.poUrl || record.link || '').trim()
   };
+}
+
+function opsPickText_(record, keys) {
+  for (const key of keys) {
+    const value = record && record[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return '';
 }
 
 function opsBuildReceivablesSummary_(records, overview) {
