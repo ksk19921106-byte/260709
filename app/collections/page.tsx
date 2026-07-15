@@ -1531,7 +1531,7 @@ export default function CollectionsPage() {
         <section className="ops-card p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">전체 수금 현황</h3>
+              <h3 className="text-[20px] font-[950] tracking-[-0.02em] text-[#111827]">{isAdmin ? "전체 수금 현황" : "내 수금 현황"}</h3>
               <p className="mt-1 text-[13px] font-[750] text-[#64748b]">
                 {isAdmin ? "전체 직원" : `${selectedUser.name}님`}의 수금 대상 {composition.totalRecords}건 중 완료 {composition.completedRecords.length}건, 부분수금 {composition.partialRecords.length}건, 미수 {composition.unpaidRecords.length}건입니다.
               </p>
@@ -1588,7 +1588,7 @@ export default function CollectionsPage() {
               </>
             ) : null}
             <span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-[900] text-[#64748b]">
-              필터 결과 {scopedRecords.length}건
+              {isAdmin ? "필터 결과" : "내 담당 기준"} {scopedRecords.length}건
             </span>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
